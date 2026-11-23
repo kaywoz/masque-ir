@@ -1,0 +1,48 @@
+# Source for docs/flow.svg. Render:
+#   d2 --theme 200 --layout elk --pad 24 docs/flow.d2 docs/flow.svg
+direction: right
+style: {fill: "#0d1117"}
+classes: {
+  step: {style: {fill: "#0b2a3a"; stroke: "#1fb6ff"; font-color: "#e6f6ff"; border-radius: 6; font-size: 18}}
+  file: {shape: page; style: {fill: "#111827"; stroke: "#5b6b7f"; font-color: "#c9d4e0"; font-size: 18}}
+  gate: {shape: hexagon; style: {fill: "#3a0b16"; stroke: "#ff5c7a"; font-color: "#ffe6eb"; font-size: 18}}
+  gap: {style: {opacity: 0}}
+}
+
+export: "Defender export\nCSV / JSON" {class: file}
+
+local: "Your machine · no network" {
+  style: {fill: "#0d1117"; stroke: "#1fb6ff"; stroke-dash: 3; font-color: "#7fd3ff"; font-size: 22}
+  grid-columns: 3
+  grid-gap: 60
+
+  import: "import\ntokenise · defang · collapse" {class: step}
+  gate: "egress gate" {class: gate}
+  outbox: "outbox-1.md\ntokens only" {class: file}
+  store: "map.sqlite\nreal ↔ «TOKEN»" {
+    shape: cylinder
+    style: {fill: "#111827"; stroke: "#5b6b7f"; font-color: "#c9d4e0"; font-size: 18}
+  }
+  g1: "" {class: gap}
+  g2: "" {class: gap}
+  report: "report-1.md\nreal values" {class: file}
+  restore: "restore" {class: step}
+  inbox: "inbox-1.md\nthe answer" {class: file}
+
+  import -> gate
+  gate -> outbox: passes
+  import -> store: writes
+  store -> gate: checks {style.stroke-dash: 3}
+  store -> restore: looks up {style.stroke-dash: 3}
+  inbox -> restore
+  restore -> report
+}
+
+chat: "Cloud LLM chat\nsees only tokens" {
+  shape: cloud
+  style: {fill: "#161b22"; stroke: "#a78bfa"; font-color: "#e9e3ff"; font-size: 18}
+}
+
+export -> local.import
+local.outbox -> chat: you paste {style: {stroke: "#a78bfa"; font-color: "#c4b5fd"}}
+chat -> local.inbox: you save {style: {stroke: "#a78bfa"; font-color: "#c4b5fd"}}
