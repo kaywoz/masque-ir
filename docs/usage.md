@@ -22,6 +22,7 @@ T=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/kaywoz/masque-ir/mai
 | `--ref REF` | install a tag or branch instead of the latest release |
 | `--with-ner` | add the name-detection stage (gliner, CPU torch and the pinned model, ~1.2 GB) |
 | `--models-from DIR` | take the model files from `DIR` instead of Hugging Face |
+| `--with-tui` | add the guided TUI (Textual, pure Python); its wheels come from PyPI, the release, or the `--wheel` file's folder |
 | `--wheel FILE` | install from a local wheel file (no PyPI, no GitHub) |
 | `--prefer-wheel` | use the release wheel even when PyPI is reachable |
 
@@ -33,7 +34,8 @@ Any `FAIL` stops the install.
 - The name model needs huggingface.co, or `--models-from DIR`.
 
 **Fully offline** (no GitHub, no PyPI): copy `uv` into `~/.local/bin` and a
-release wheel onto the machine, then run:
+release wheel onto the machine, then run the command below. With `--with-tui`,
+also put the release's other `.whl` files in the same folder.
 
 ```bash
 bash install.sh --wheel masquer-VERSION-py3-none-any.whl
@@ -46,6 +48,21 @@ then run `install.sh --with-ner --models-from DIR`.
 **WSL2:** keep case folders inside the Linux file system (`~`), not under
 `/mnt/c`.
 
+## TUI
+
+Run `masquer` with no arguments, or `masquer tui --cases DIR`. Cases live in
+`$MASQUER_CASES`, default `~/masquer-cases` (mode 700).
+
+| Screen | What you do |
+|---|---|
+| Cases | Pick a case (Enter) or create one. Cases older than 30 days are flagged. |
+| 1 Import | Tick exports from `~/Downloads`, or type paths separated by `;`. Choose whether to use the name model. Shows rows before and after collapsing. |
+| 2 Review | Choose whether to neutralise injection and whether to allow without the name model, then write the outbox. Shows the gate result and a preview of each part with tokens highlighted. |
+
+Keys: `Esc` goes back to the cases, `q` quits, `Ctrl+P` opens the command palette.
+Copying to the clipboard and pasting the answer back come in the next release;
+until then, use `masquer restore`.
+
 ## Commands
 
 | Command | What it does |
@@ -55,6 +72,7 @@ then run `install.sh --with-ner --models-from DIR`.
 | `masquer outbox CASE` | runs the egress gate, then writes `CASE/outbox-N.md` |
 | `masquer restore CASE [INBOX]` | writes `CASE/report-N.md` (the default input is the newest `inbox-N.md`) |
 | `masquer synth --out DIR` | writes synthetic exports (test data only) |
+| `masquer tui [--cases DIR]` | the guided TUI (also: `masquer` with no arguments) |
 
 **import**
 - `--gap SECONDS`: collapse repeats less than this far apart (default 3600).

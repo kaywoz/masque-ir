@@ -96,7 +96,20 @@ def cmd_restore(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tui(a: argparse.Namespace) -> int:
+    try:
+        from .tui import run
+    except ImportError:
+        print("masquer: the TUI isn't installed. Re-run the installer with --with-tui,\n"
+              "or use the commands: masquer --help", file=sys.stderr)
+        return 2
+    return run(Path(a.cases).expanduser() if a.cases else None)
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv:
+        argv = ["tui"]  # no arguments: the guided TUI
     p = argparse.ArgumentParser(prog="masquer", description=__doc__)
     p.add_argument("--version", action="version", version=f"masquer {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -144,6 +157,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("case")
     r.add_argument("inbox", nargs="?", help="the saved cloud answer (default: newest CASE/inbox-N.md)")
     r.set_defaults(func=cmd_restore)
+
+    t = sub.add_parser("tui", help="guided full-screen flow (also: masquer with no arguments)")
+    t.add_argument("--cases", help="folder holding the cases (default: $MASQUER_CASES or ~/masquer-cases)")
+    t.set_defaults(func=cmd_tui)
 
     a = p.parse_args(argv)
     return a.func(a)

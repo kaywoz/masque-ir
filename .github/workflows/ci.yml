@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - name: Tests
-        run: uv run --frozen pytest -q
+        run: uv run --frozen --extra tui pytest -q
       - name: Installer lint
         if: runner.os == 'Linux'
         run: shellcheck -s bash install.sh
