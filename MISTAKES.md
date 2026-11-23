@@ -33,3 +33,11 @@ turns out to have been based on a misunderstanding.
 - **Root cause:** compared a floored, reserved-memory figure against a nominal size without checking what `MemTotal` reports on a machine of that size.
 - **Fix applied:** RAM compared in MiB with 0.5 GiB slack (fail under 7.5 GiB, warn under 11.5 GiB), shown with one decimal.
 - **Rule going forward:** size checks against nominal hardware sizes allow for kernel-reserved memory and never floor before comparing.
+
+### 2026-11-23 — chat (checkout assumed to exist)
+
+- **Trigger:** command failed on the host
+- **What happened:** the release-tag command started with `cd masque-ir` in kaywoz's `github` folder; there was no masque-ir checkout there, so `cd` failed. A clone was only mentioned as an afterthought.
+- **Root cause:** assumed a local checkout existed instead of making the command create or find it (repeat of home0ps 2026-11-23, guessed checkout path).
+- **Fix applied:** the command clones into a temporary folder when no checkout is given.
+- **Rule going forward:** commands for kaywoz's machines never assume a checkout or folder exists; they clone into `mktemp -d`, or test for the path first and say what to do if it's missing.
