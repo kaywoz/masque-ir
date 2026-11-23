@@ -2,6 +2,15 @@
 
 # masque-(i)r
 
+> [!CAUTION]
+> **NOT FOR PUBLIC CONSUMPTION.** This is a personal tool, published only so its
+> author can install it. It isn't a product.
+> - No support and no warranty. Issues and PRs from others may be closed unread.
+> - Masking can miss identifiers. Read every outbox yourself before you paste it.
+> - Pasting data into a cloud LLM may break your employer's, customer's or
+>   regulator's rules even when it's masked. Getting permission is your job.
+> - Releases, commands and file formats change without notice.
+
 **Let a cloud LLM triage your Defender data without handing it your customer's
 data.**
 
