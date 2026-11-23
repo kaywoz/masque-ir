@@ -21,7 +21,7 @@ def cmd_synth(a: argparse.Namespace) -> int:
     res = generate(Path(a.out), a.table or None, a.rows, a.seed, a.format, a.encoding, a.dup_rate,
                    injections=not a.no_injection)
     print(f"{len(res['tables'])} tables, {sum(res['tables'].values())} rows, "
-          f"{res['canaries']} canaries -> {a.out}")
+          f"{res['canaries']} canaries -> {Path(a.out).resolve()}")
     return 0
 
 
@@ -103,7 +103,8 @@ def cmd_tui(a: argparse.Namespace) -> int:
         print("masquer: the TUI isn't installed. Re-run the installer with --with-tui,\n"
               "or use the commands: masquer --help", file=sys.stderr)
         return 2
-    return run(Path(a.cases).expanduser() if a.cases else None)
+    return run(Path(a.cases).expanduser() if a.cases else None,
+               Path(a.exports).expanduser().resolve() if a.exports else None)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -160,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
 
     t = sub.add_parser("tui", help="guided full-screen flow (also: masquer with no arguments)")
     t.add_argument("--cases", help="folder holding the cases (default: $MASQUER_CASES or ~/masquer-cases)")
+    t.add_argument("--exports", help="extra folder to list exports from (besides ~/Downloads)")
     t.set_defaults(func=cmd_tui)
 
     a = p.parse_args(argv)

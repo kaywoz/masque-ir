@@ -46,10 +46,54 @@ def list_cases(base: Path) -> list[Path]:
     return sorted((p for p in base.iterdir() if p.is_dir() and is_case(p)), key=lambda p: p.name)
 
 
-def export_candidates(dirs: list[Path], limit: int = 50) -> list[Path]:
-    """CSV/JSON files directly in the given folders, newest first."""
-    found = {f.resolve() for d in dirs if d.is_dir() for g in EXPORT_GLOBS for f in d.glob(g) if f.is_file()}
+NOT_EXPORTS = {"canaries.json", "imports.json"}  # synth's leak list, a case's import log
+
+
+def _exports_in(d: Path, depth: int) -> set[Path]:
+    globs = EXPORT_GLOBS + tuple(f"*/{g}" for g in EXPORT_GLOBS) if depth > 1 else EXPORT_GLOBS
+    return {f.resolve() for g in globs for f in d.glob(g) if f.is_file() and f.name not in NOT_EXPORTS}
+
+
+def export_candidates(dirs: list[Path], limit: int = 200, depth: int = 2) -> list[Path]:
+    """CSV/JSON files in the given folders and (depth 2) their subfolders, newest first."""
+    found = set().union(*(_exports_in(d, depth) for d in dirs if d.is_dir())) if dirs else set()
     return sorted(found, key=lambda f: f.stat().st_mtime, reverse=True)[:limit]
+
+
+def expand_paths(text: str, cwd: Path | None = None) -> tuple[list[Path], list[str]]:
+    """Paths typed by the user: separated by ';' or newlines; '~', relative
+    (to cwd), globs, and folders (their CSV/JSON exports). Returns (files, not found)."""
+    cwd = cwd or Path.cwd()
+    files, missing = [], []
+    for raw in re.split(r"[;\n]", text):
+        item = raw.strip().strip("'\"")
+        if not item:
+            continue
+        p = Path(item).expanduser()
+        p = p if p.is_absolute() else cwd / p
+        if any(c in item for c in "*?["):
+            hits = sorted(f for f in Path(p.anchor).glob(str(p.relative_to(p.anchor))) if f.is_file())
+            files += hits
+            if not hits:
+                missing.append(item)
+        elif p.is_dir():
+            hits = sorted(_exports_in(p, 1))
+            files += hits
+            if not hits:
+                missing.append(f"{item} (no CSV/JSON inside)")
+        elif p.is_file():
+            files.append(p.resolve())
+        else:
+            missing.append(item)
+    return files, missing
+
+
+def short(p: Path) -> str:
+    """Path for display: ~ for the home folder."""
+    try:
+        return "~/" + str(p.relative_to(Path.home()))
+    except ValueError:
+        return str(p)
 
 
 def highlight_tokens(text: str) -> Text:
@@ -149,9 +193,9 @@ class CaseScreen(Screen):
         yield Label(f"Case {self.case.root.name}  ·  {self.case.root}", id="case-title")
         with TabbedContent(initial="import"):
             with TabPane("1 Import", id="import"):
-                yield Label("Pick exports (newest first) or type paths, separated by ';'.")
+                yield Label("Pick exports (newest first), or type files, folders or globs separated by ';'.")
                 yield SelectionList[str](id="files")
-                yield Input(placeholder="/path/to/DeviceProcessEvents.csv; /path/to/EmailEvents.csv", id="paths")
+                yield Input(placeholder="~/Downloads/masquer-demo   or   ~/exports/*.csv; ./EmailEvents.csv", id="paths")
                 with Horizontal(classes="row"):
                     yield Label("Name model", classes="lbl")
                     yield Switch(value=ner_installed(), disabled=not ner_installed(), id="use-ner")
@@ -185,7 +229,7 @@ class CaseScreen(Screen):
         sl = self.query_one("#files", SelectionList)
         sl.clear_options()
         for f in export_candidates(dirs):
-            sl.add_option((f"{f.name}  ({f.parent})", str(f)))
+            sl.add_option((f"{f.name}  ({short(f.parent)})", str(f)))
 
     def show_imported(self) -> None:
         done = self.case.imports()
@@ -196,12 +240,12 @@ class CaseScreen(Screen):
     @on(Button.Pressed, "#do-import")
     def start_import(self) -> None:
         picked = [Path(p) for p in self.query_one("#files", SelectionList).selected]
-        typed = [Path(p.strip()).expanduser() for p in self.query_one("#paths", Input).value.split(";") if p.strip()]
-        files = sorted(dict.fromkeys(picked + typed), key=lambda f: (f.name, str(f)))  # stable token numbering
+        typed, missing = expand_paths(self.query_one("#paths", Input).value)
+        files = sorted(dict.fromkeys(f.resolve() for f in picked + typed), key=lambda f: (f.name, str(f)))  # stable tokens
         msg = self.query_one("#import-msg", Static)
-        missing = [str(f) for f in files if not f.is_file()]
         if not files or missing:
-            msg.update("Pick or type at least one file." if not files else f"Not found: {', '.join(missing)}")
+            msg.update("Pick or type at least one file or folder." if not missing
+                       else Text(f"Not found: {', '.join(missing)}", style="bold red"))
             return
         self.query_one("#do-import", Button).disabled = True
         msg.update(f"Importing {len(files)} file(s)…")
@@ -282,6 +326,6 @@ class MasquerApp(App):
         self.push_screen(CasesScreen())
 
 
-def run(cases_dir: Path | None = None) -> int:
-    MasquerApp(cases_dir).run()
+def run(cases_dir: Path | None = None, exports_dir: Path | None = None) -> int:
+    MasquerApp(cases_dir, exports_dir).run()
     return 0
