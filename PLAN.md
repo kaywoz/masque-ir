@@ -75,6 +75,46 @@ WSL: raise `memory=` in `.wslconfig` if WSL sees under ~8 GB.
 - Optional Qwen recheck of flagged spans (parked until real data shows gaps).
 - Outbox size: a full 66-table export is 7 MB (53 parts); add per-table summaries and a `--tables`/time-window filter for chat-sized outboxes.
 
+## TUI (proposal, not approved; kaywoz 2026-11-23: "an easy tui for usage")
+
+Running `masquer` with no arguments opens a guided full-screen flow. The
+subcommands stay unchanged for scripts. The TUI calls the same `Case` API the
+CLI uses: no subprocesses, no second code path. Only `Case.outbox()` writes an
+outbox, so the egress gate can't be bypassed.
+
+### Screens
+1. **Cases**: list of cases with age; cases older than 30 days flagged; new case.
+2. **Import**: pick files (path field plus a file list of the case folder and `~/Downloads`); progress; rows before and after collapsing; token counts by kind; whether the name model is on.
+3. **Review**: outbox preview with tokens highlighted, loaded one screen at a time. Shows the gate result, the injection count and a `--neutralise-injection` switch; the part number when the outbox is split.
+4. **Copy out**: copy part N to the clipboard, or show its path.
+5. **Paste back**: read the answer from the clipboard (or a file), save `inbox-N.md`, restore, show the report with `⚠` markers and the damaged-token count, and open the report file.
+
+### Decisions needed (kaywoz)
+- **D1, library.**
+  - (a) Textual: polished, mouse support. Its dependencies are textual, rich, markdown-it-py, mdurl, pygments, platformdirs and typing-extensions, all pure Python.
+  - (b) stdlib `curses`: no dependencies, plainer.
+
+  Recommendation: (a), as an optional extra `masquer[tui]` with `install.sh --with-tui`, so the core install stays dependency-free.
+- **D2, offline install.** The release-wheel fallback (blocked PyPI) installs only the masquer wheel today. With (a), the release also attaches the TUI dependency wheels, listed in `SHA256SUMS`, and the installer uses `uv pip install --no-index --find-links`. Recommendation: yes.
+- **D3, clipboard.** Copy out and paste back via `pbcopy`/`pbpaste` (macOS), `wl-copy`/`xclip` (Linux), and `clip.exe` / `powershell.exe Get-Clipboard` (WSL). With no clipboard tool, the TUI shows file paths only. Recommendation: yes for the outbox and the answer.
+- **D4, copying the report.** The report holds real values. Windows clipboard history and cloud clipboard sync can send it off the machine. Recommendation: no copy button for the report; open it as a file only.
+- **D5, web UI.** Keep it parked, or drop it if the TUI covers the need.
+
+### Build order (Claude; one PR each)
+1. `feat/tui-core`: screens 1–3; file paths only; extra `[tui]`; `install.sh --with-tui`; release dependency wheels (D2).
+2. `feat/tui-clipboard`: screens 4–5 and `clip.py`. WSL is detected via `/proc/version`; WSL text needs CRLF/UTF-16 handling. No temp files.
+3. `feat/tui-report`: report view, ⚠ navigation, damaged-token count (needs `fix/restore-damaged-tokens`).
+
+### Tests
+- Headless Textual pilot (`App.run_test()`) in CI on Linux and macOS: run the whole flow on a synthetic case.
+- The outbox written by the TUI is byte-identical to `masquer outbox` with the same options.
+- The canary leak tests run on the TUI's outbox.
+- No-clipboard fallback test, using an empty `PATH`.
+
+### kaywoz
+- Answer D1–D5.
+- Test each PR on the Mac mini and in WSL on the corp laptop: the clipboard both ways, and how the WSL terminal renders the screens.
+
 ## Parked
 Native Windows build, API mode, other input sources, MDE investigation package.
 - Web UI (later, kaywoz 2026-11-23): local import/export: drop an export in, copy the outbox, paste the answer, download the report. Loopback only, with a per-run token; native mode first. Container mode needs a way to publish a port without outbound network (e.g. an internal network with no route out), to be designed then.
