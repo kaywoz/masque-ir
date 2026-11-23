@@ -309,3 +309,27 @@ def test_outbox_parts_respect_size(synth_case):
     assert len(parts) > 1 and all(len(t) <= 20_000 + 32 for t in texts)
     text = "".join(texts).casefold()
     assert not {v for k, vals in canaries.items() if k not in NER_KINDS for v in vals if v.casefold() in text}
+
+
+def test_reimport_same_file_is_skipped(tmp_path):
+    synth = tmp_path / "synth"
+    generate(synth, tables=["DeviceProcessEvents"], rows=20, seed=3)
+    f = synth / "DeviceProcessEvents.csv"
+    case = Case.create(tmp_path / "case")
+    first = case.import_files([f])
+    masked = case.root / "masked" / "DeviceProcessEvents.json"
+    n = len(json.loads(masked.read_text("utf-8")))
+    assert first and not case.last_skipped
+    # again, also through a renamed copy: same content, nothing added
+    copy = tmp_path / "copy.csv"
+    copy.write_bytes(f.read_bytes())
+    assert case.import_files([f, copy]) == {}
+    assert case.last_skipped == ["DeviceProcessEvents.csv", "copy.csv"]
+    assert len(json.loads(masked.read_text("utf-8"))) == n
+    assert len(case.imports()) == 1 and len(case.imports()[0]["sha256"]) == 64
+    # same name, other content: imported, its input copy gets a hash suffix
+    other = tmp_path / "x" / "DeviceProcessEvents.csv"
+    generate(other.parent, tables=["DeviceProcessEvents"], rows=5, seed=4)
+    case.import_files([other])
+    assert not case.last_skipped
+    assert len(list((case.root / "input").glob("DeviceProcessEvents*.csv"))) == 2

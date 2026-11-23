@@ -14,11 +14,11 @@ reports. Layout (folder mode 700, files 600):
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
 import re
-import shutil
 from collections import Counter
 from pathlib import Path
 
@@ -177,16 +177,31 @@ class Case:
 
     def import_files(self, files: list[Path], gap: int = 3600, ner=None) -> dict[str, tuple[int, int]]:
         store = self.store()
-        masker = self.masker(store, ner)
+        # The same file twice would double every row: skip content that is
+        # already in the case (by SHA256 of the copies in input/, O(total size)).
+        known = {hashlib.sha256(p.read_bytes()).hexdigest() for p in (self.root / "input").iterdir() if p.is_file()}
+        self.last_skipped = []
         result = {}
         loaded = []
         for f in files:
-            rows = read_export(f)
+            data = Path(f).read_bytes()
+            digest = hashlib.sha256(data).hexdigest()
+            if digest in known:
+                self.last_skipped.append(f.name)
+                continue
+            known.add(digest)
             dest = self.root / "input" / f.name
+            if dest.exists() and f.resolve() != dest.resolve():  # same name, other content
+                dest = dest.with_name(f"{dest.stem}-{digest[:8]}{dest.suffix}")
             if f.resolve() != dest.resolve():
-                shutil.copyfile(f, dest)
+                dest.write_bytes(data)
                 os.chmod(dest, 0o600)
+            rows = read_export(f)
             loaded.append((f, guess_table(f, rows), rows))
+        if not loaded:
+            store.close()
+            return result
+        masker = self.masker(store, ner)
         # Pass 1: identity columns of every file, so the known-values sweep
         # (built once, O(total values)) covers names from all tables.
         for _, _, rows in loaded:
@@ -209,7 +224,8 @@ class Case:
             write_private(out, json.dumps(prev + merged, ensure_ascii=False, indent=0))
             result[table] = (len(rows), len(merged))
         store.commit()
-        log = self.imports() + [{"file": f.name, "table": t, "ner": getattr(ner, "name", None)}
+        log = self.imports() + [{"file": f.name, "table": t, "ner": getattr(ner, "name", None),
+                                 "sha256": hashlib.sha256(Path(f).read_bytes()).hexdigest()}
                                 for f, t, _ in loaded]
         write_private(self.root / "imports.json", json.dumps(log, indent=1))
         store.close()
