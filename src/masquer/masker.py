@@ -123,9 +123,22 @@ class Masker:
                         return v
                 return self.tok(kind, v)
             s = self._sub(s, rx, repl)
+        s = self._sub(s, detect.ACCOUNT_ARG_RE, lambda m: m.group(1) + self.tok("ACCOUNT", m.group(2)))
+
         s = self._sub(s, detect.USERPATH_RE,
                       lambda m: m.group(0) if m.group(2).casefold() in detect.SYSTEM_PROFILES
                       else m.group(1) + self.tok("ACCOUNT", m.group(2)))
+
+        def domain_user(m):
+            dom, user = m.group(1), m.group(2)
+            if dom.casefold() in detect.SYSTEM_DOMAINS or detect.SINGLE_EXT.match(user):
+                return m.group(0)
+            return self.tok("DOMAIN", dom) + "\\" + self.tok("ACCOUNT", user)
+        s = self._sub(s, detect.DOMAIN_USER_RE, domain_user)
+        # The domain part may already be a token (swept as a known value).
+        s = re.sub(r"(«DOMAIN_\d+»)\\([A-Za-z0-9][\w.$-]{0,63})(?![\w\\])",
+                   lambda m: m.group(0) if detect.SINGLE_EXT.match(m.group(2))
+                   else m.group(1) + "\\" + self.tok("ACCOUNT", m.group(2)), s)
         s = self._sub(s, detect.UNC_RE, lambda m: "\\\\" + self.tok("HOST", m.group(1)) + "\\")
 
         def dom(m):
@@ -134,6 +147,9 @@ class Masker:
                 return v.replace(".", "[.]") if self.allowed_domain(v) else v
             return self.tok("DOMAIN", v)
         s = self._sub(s, detect.DOMAIN_RE, dom)
+        s = self._sub(s, detect.DOTTED_NAME_RE,
+                      lambda m: m.group(0) if detect.SINGLE_EXT.match(m.group(0)) or self.allowed_domain(m.group(0))
+                      else self.tok("ACCOUNT", m.group(0)))
         s = self._sub(s, BLOB_RE, self.blob)
         return s
 

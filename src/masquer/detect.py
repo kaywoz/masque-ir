@@ -150,8 +150,32 @@ DETECTORS: list[tuple[str, re.Pattern, object]] = [
 ]
 
 URL_RE = re.compile(r"\b(?:https?|ftp|hxxps?)://[^\s\"'<>|]+", re.IGNORECASE)
-DOMAIN_RE = re.compile(r"(?<![\w.@-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,24}))(?![\w-]|\.\w)",
+DOMAIN_RE = re.compile(r"(?<![\w.@\\-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,24}))(?![\w-]|\.\w)",
                        re.IGNORECASE)
+# A dotted name only counts as a host or domain when its last label is a real
+# or internal TLD; otherwise "anna.lindqvist" (an account) would match.
+GENERIC_TLDS = {
+    "com", "net", "org", "edu", "gov", "mil", "int", "info", "biz", "io", "co", "app", "dev", "cloud",
+    "online", "site", "xyz", "top", "club", "shop", "store", "tech", "live", "link", "click", "pro",
+    "name", "mobi", "me", "tv", "cc", "ws", "ru", "cn", "su", "icu", "buzz", "work", "zip", "mov",
+    "local", "lan", "internal", "corp", "home", "intranet", "private", "arpa",
+    "example", "test", "invalid", "localhost", "onion",
+}
+
+
+def is_tld(label: str) -> bool:
+    label = label.lower()
+    return label in GENERIC_TLDS or (len(label) == 2 and label.isalpha())
+
+# NETBIOS\account in command lines and free text (e.g. /ru CORP\anna.l).
+DOMAIN_USER_RE = re.compile(r"(?<![\w\\.:/-])([A-Za-z][A-Za-z0-9-]{1,14})\\([A-Za-z0-9][\w.$-]{0,63})(?![\w\\])")
+SYSTEM_DOMAINS = {"authority", "builtin", "workgroup", "service", "manager", "host", "apppool",
+                  "machine", "localhost"}
+# "first.last"-style names on their own are almost always accounts. Over-
+# tokenising a rare module name is cheaper than leaking an account.
+DOTTED_NAME_RE = re.compile(r"(?<![\w.@\\/:-])([^\W\d_]{2,}\.[^\W\d_]{2,})(?![\w.@\\/-])")
+# Accounts named as command arguments: net user NAME, /user:NAME, runas /user:D\N
+ACCOUNT_ARG_RE = re.compile(r"(?i)((?<!\w)net1?(?:\.exe)?\s+(?:user|localgroup\s+\S+)\s+|(?<!\w)/u(?:ser)?:)([^\s\\/\"']{2,64})(?!\\)")
 USERPATH_RE = re.compile(r"(?i)(\\Users\\|/Users/|/home/)([^\\/\s\"']+)")
 UNC_RE = re.compile(r"(?<![\w:\\])\\\\([A-Za-z0-9][\w.-]*)\\")
 SINGLE_EXT = re.compile(rf"^[^.]+\.(?:{FILE_EXT})$", re.IGNORECASE)
@@ -169,9 +193,8 @@ def ip_kind(s: str) -> str | None:
 
 
 def is_domain_candidate(s: str) -> bool:
-    """A dotted name that's a host or domain rather than a file name or version."""
-    if SINGLE_EXT.match(s):
+    """A dotted name that's a host or domain rather than a file name, version
+    or dotted account name."""
+    if SINGLE_EXT.match(s) or re.fullmatch(r"[\d.]+", s):
         return False
-    if re.fullmatch(r"[\d.]+", s):
-        return False
-    return True
+    return is_tld(s.rsplit(".", 1)[-1])

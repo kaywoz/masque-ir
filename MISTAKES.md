@@ -49,3 +49,19 @@ turns out to have been based on a misunderstanding.
 - **Root cause:** wrote one block for a flow with a human step in the middle; the CLI had no friendly error for a missing inbox.
 - **Fix applied:** `restore` defaults to the newest `inbox-N.md` and exits 2 with a clear message (and how to save the clipboard) when none exists.
 - **Rule going forward:** a command block handed to kaywoz stops at the first manual step; the commands after it go in a separate block.
+
+### 2026-11-23 — pipeline (accounts tokenised as domains; NETBIOS left in clear)
+
+- **Trigger:** found by the cloud model's review of a synthetic outbox
+- **What happened:** dotted account names (`anna.lindqvist`) matched the domain detector and became `«DOMAIN_…»`; the store's one-token-per-original rule then made the same account a DOMAIN everywhere (`C:\Users\«DOMAIN_0043»`). A NETBIOS domain before `\` (`/ru NORDVIND\user`) was only tokenised when already known from another column.
+- **Root cause:** the domain regex accepted any last label of 2-24 letters as a TLD; no detector for `DOMAIN\account`; leak tests passed because over-matching still hid the values, so the wrong kind went unnoticed.
+- **Fix applied:** domains need a real or internal TLD; new detectors for `DOMAIN\account` (also after an already-tokenised domain), `net user NAME` / `/user:NAME`, and standalone `first.last` names as ACCOUNT; tests per case.
+- **Rule going forward:** leak tests check that a value is hidden *and* tests check the token kind for each detector; a detector change runs the full synthetic leak check before the PR.
+
+### 2026-11-23 — synth (ActionType in the wrong table)
+
+- **Trigger:** found by the cloud model's review of a synthetic outbox
+- **What happened:** the generator put `OpenProcessApiCall` in `DeviceProcessEvents`; it's a `DeviceEvents` ActionType.
+- **Root cause:** the hand-kept "common ActionType" list was written from memory, not checked against the schema reference.
+- **Fix applied:** moved to `DeviceEvents`.
+- **Rule going forward:** hand-kept schema facts in the generator get a source or are marked unverified in the code.
