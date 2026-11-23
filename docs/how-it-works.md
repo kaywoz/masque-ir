@@ -54,8 +54,10 @@ Tokens look like `«KIND_NNNN»` and are numbered per case. The mapping lives in
 
 - The answer's outer ```` ```markdown ```` fence is removed, and inner `~~~` fences become ```` ``` ```` again.
 - Exact tokens are replaced by their originals.
-- Tokens the model altered (missing `« »`, different zero padding) are matched, restored and marked `⚠(was …)`.
+- Tokens missing only their `« »` (`HOST_0003`) are restored without a marker and counted as `restored_bare`.
+- Tokens altered in any other way (different zero padding) are matched, restored and marked `⚠(was …)`.
 - Tokens that aren't in the case are left as they are and marked `⚠ unknown token`.
+- A `«…»` that looks like a token with stray characters inside (`«A*COUNT_0003»`) is never guessed. It's marked `⚠ damaged token, copy the answer again`.
 
 ## Synthetic data (`masquer synth`)
 

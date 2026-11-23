@@ -94,7 +94,7 @@ def cmd_restore(a: argparse.Namespace) -> int:
         return 2
     dest, stats = case.restore(inbox)
     print(f"{dest}: " + ", ".join(f"{k} {v}" for k, v in sorted(stats.items())) or "no tokens")
-    if stats.get("unknown") or stats.get("restored_altered"):
+    if stats.get("unknown") or stats.get("restored_altered") or stats.get("damaged"):
         print("Check the lines marked ⚠ in the report.")
     return 0
 

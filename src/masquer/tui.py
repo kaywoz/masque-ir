@@ -418,7 +418,7 @@ class CaseScreen(Screen):
             msg.update(Text(f"Restore failed: {e}", style="bold red"))
             return
         self.report_path = dest
-        warn = stats.get("unknown", 0) + stats.get("restored_altered", 0)
+        warn = stats.get("unknown", 0) + stats.get("restored_altered", 0) + stats.get("damaged", 0)
         msg.update(Text.assemble((f"{inbox.name} -> {dest.name}: ", "bold green"),
                                  ", ".join(f"{k} {v}" for k, v in sorted(stats.items())) or "no tokens",
                                  (f"  ·  check the {warn} ⚠ line(s)" if warn else "", "bold #ffb000")))

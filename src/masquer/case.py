@@ -56,6 +56,11 @@ RULES = """Rules for this data and your answer:
 """
 
 
+# A «…» left after restoring that looks like a token with stray characters,
+# e.g. «A*COUNT_0003» or «HOST_00 01»: upper-case letters, digits, _ and noise.
+DAMAGED_RE = re.compile(r"«(?=[^»\n]{0,40}_)(?=[^»\n]*[A-Z]{2})[A-Z0-9_*·.\- ]{3,40}»")
+
+
 def split_block(block: str, limit: int) -> list[str]:
     """A rendered table block longer than `limit`, cut into chunks of whole rows.
     Each chunk repeats the heading (marked "rows a-b of n") and the column row.
@@ -367,11 +372,23 @@ class Case:
 
         def lenient(m):
             tok = by_key.get((m.group(1), int(m.group(2))))
-            if tok:
-                stats["restored_altered"] += 1
-                return f"{lookup[tok]} ⚠(was {m.group(0)})"
-            return m.group(0)
+            if not tok:
+                return m.group(0)
+            if f"«{m.group(0)}»" == tok:
+                # Only the « » marks are gone (Copilot does this): the rest is
+                # exact, so restore quietly and count it (kaywoz 2026-11-23).
+                stats["restored_bare"] += 1
+                return lookup[tok]
+            stats["restored_altered"] += 1
+            return f"{lookup[tok]} ⚠(was {m.group(0)})"
         out = loose.sub(lenient, out)
+
+        # Tokens damaged in the chat UI (stray *, spaces, cut off): never
+        # guessed, only marked so the answer can be copied again.
+        def damaged(m):
+            stats["damaged"] += 1
+            return f"{m.group(0)} ⚠ damaged token, copy the answer again"
+        out = DAMAGED_RE.sub(damaged, out)
         m = re.search(r"(\d+)", inbox.stem)
         n = round_no or (int(m.group(1)) if m else 1)
         dest = self.root / f"report-{n}.md"

@@ -101,8 +101,9 @@ answer:  Isolate «HOST_0004»; reset «UPN_0003». Block «DOMAIN_0004» (seen 
 report:  Isolate fja-lt-0007.corp.fjallbacka-se.example; reset erik.johansson@fjallbacka-se.example. Block cdn-0114.test (seen in hxxp://cdn-0114.test/dl/4cb73a80a3b4.php).
 ```
 
-Tokens the model changed are restored and marked `⚠(was …)`. Tokens it made up
-are marked `⚠ unknown token`.
+Tokens that lost only their `« »` are restored silently. Tokens the model
+changed in another way are restored and marked `⚠(was …)`. Tokens it made up
+are marked `⚠ unknown token`, and damaged ones are never guessed.
 
 ## Limits
 

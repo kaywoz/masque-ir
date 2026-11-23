@@ -132,5 +132,7 @@ public.
 
 | Marker | Meaning |
 |---|---|
-| `⚠(was …)` | the model altered a token; the original was restored anyway |
+| (none) | the model kept the token, or dropped only its `« »` marks (counted as `restored_bare`) |
+| `⚠(was …)` | the model altered a token in another way, e.g. its zero padding; the original was restored anyway |
 | `⚠ unknown token` | the token isn't in this case; the model invented it |
+| `⚠ damaged token, copy the answer again` | stray characters inside `«…»` (seen with Copilot's `*`); not guessed, left as is |
