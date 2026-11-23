@@ -18,9 +18,11 @@ trap 'echo "install.sh: failed at line $LINENO" >&2' ERR
 PREFIX_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/masquer"
 PREFIX_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/masquer"
 
-# Thresholds (GB). Models: GLiNER ~1 GB + Qwen3.5 4B Q4 ~3 GB, plus headroom.
-MIN_RAM_GB=8
-WARN_RAM_GB=12
+# Thresholds. Models: GLiNER ~1 GB + Qwen3.5 4B Q4 ~3 GB, plus headroom.
+# RAM in MiB with 0.5 GiB slack: the kernel reserves memory, so an 8 GB
+# machine or WSL VM reports roughly 7.6-7.9 GiB in MemTotal.
+MIN_RAM_MIB=7680    # "8 GB"
+WARN_RAM_MIB=11776  # "12 GB"
 MIN_DISK_GB=6
 
 # Hosts the install needs (not masquer itself, which never uses the network).
@@ -53,18 +55,21 @@ os_kind() {
   esac
 }
 
-# Total RAM in whole GB.
-ram_total_gb() {
+# Total RAM in MiB.
+ram_total_mib() {
   case "$1" in
-    macos) echo $(( $(sysctl -n hw.memsize) / 1073741824 )) ;;
-    *)     awk '/^MemTotal:/ {printf "%d", $2 / 1048576}' /proc/meminfo ;;
+    macos) echo $(( $(sysctl -n hw.memsize) / 1048576 )) ;;
+    *)     awk '/^MemTotal:/ {printf "%d", $2 / 1024}' /proc/meminfo ;;
   esac
 }
 
-# Available RAM in whole GB (Linux/WSL only; macOS has no single figure).
-ram_avail_gb() {
-  awk '/^MemAvailable:/ {printf "%d", $2 / 1048576}' /proc/meminfo
+# Available RAM in MiB (Linux/WSL only; macOS has no single figure).
+ram_avail_mib() {
+  awk '/^MemAvailable:/ {printf "%d", $2 / 1024}' /proc/meminfo
 }
+
+# MiB as GB with one decimal.
+gb() { awk -v m="$1" 'BEGIN {printf "%.1f", m / 1024}'; }
 
 # Free disk in whole GB for the first existing parent of a path.
 disk_free_gb() {
@@ -122,19 +127,18 @@ run_check() {
 
   # RAM
   if [ "$kind" != other ]; then
-    total="$(ram_total_gb "$kind")"
-    if [ "$total" -lt "$MIN_RAM_GB" ]; then
-      fail ram "${total} GB total; need ${MIN_RAM_GB} GB or more"
-    elif [ "$total" -lt "$WARN_RAM_GB" ]; then
-      warn ram "${total} GB total; works, but the optional LLM check will be tight"
+    total="$(ram_total_mib "$kind")"
+    if [ "$total" -lt "$MIN_RAM_MIB" ]; then
+      fail ram "$(gb "$total") GB total; need 8 GB or more"
+    elif [ "$total" -lt "$WARN_RAM_MIB" ]; then
+      warn ram "$(gb "$total") GB total; works, but the optional LLM check will be tight"
     else
-      pass ram "${total} GB total"
+      pass ram "$(gb "$total") GB total"
     fi
     if [ "$kind" != macos ]; then
-      avail="$(ram_avail_gb)"
-      info ram-free "${avail} GB available now"
+      info ram-free "$(gb "$(ram_avail_mib)") GB available now"
     fi
-    if [ "$kind" = wsl ] && [ "$total" -lt "$WARN_RAM_GB" ]; then
+    if [ "$kind" = wsl ] && [ "$total" -lt "$WARN_RAM_MIB" ]; then
       info wsl-memory "raise memory= in %UserProfile%\\.wslconfig, then run: wsl --shutdown"
     fi
   fi
