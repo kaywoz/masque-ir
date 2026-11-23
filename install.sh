@@ -109,6 +109,12 @@ reachable() {
   curl -sS -o /dev/null -m 10 -I "https://$1" >/dev/null 2>&1
 }
 
+# curl exit code for a host: 0 ok; 35/51/58/60/77 = TLS (often a corporate
+# proxy inspecting TLS with a CA this system doesn't trust); else unreachable.
+probe() {
+  if curl -sS -o /dev/null -m 10 -I "https://$1" >/dev/null 2>&1; then echo 0; else echo $?; fi
+}
+
 # --- checks ----------------------------------------------------------------
 
 run_check() {
@@ -190,20 +196,42 @@ run_check() {
     warn uv "not installed: the installer adds uv $UV_VERSION to $BIN_DIR"
   fi
 
+  # Python for masquer (3.11+). Without one, uv downloads a managed Python
+  # from GitHub's release host.
+  py=""
+  for c in python3.13 python3.12 python3.11 python3; do
+    if command -v "$c" >/dev/null 2>&1 &&
+       "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+      py="$c"
+      break
+    fi
+  done
+  if [ -n "$py" ]; then
+    pass python "$("$py" --version 2>&1) ($(command -v "$py"))"
+  else
+    warn python "no Python 3.11+: uv downloads one from release-assets.githubusercontent.com"
+  fi
+
   # curl (needed for the install only)
   if command -v curl >/dev/null 2>&1; then
     pass curl "present"
     for h in $NET_HOSTS; do
-      if reachable "$h"; then
+      rc="$(probe "$h")"
+      if [ "$rc" = 0 ]; then
         pass net "$h reachable"
-      else
-        case "$h" in
-          huggingface.co) hint="copy the models in later with --models-from DIR" ;;
-          pypi.org|files.pythonhosted.org) hint="needed to build masquer; ask IT to allow it" ;;
-          *)              hint="needed to download uv and masquer; ask IT to allow it" ;;
-        esac
-        warn net "$h not reachable: $hint"
+        continue
       fi
+      case "$h" in
+        huggingface.co) hint="copy the models in later with --models-from DIR" ;;
+        pypi.org|files.pythonhosted.org) hint="needed for the uv fallback and source builds" ;;
+        release-assets.githubusercontent.com) hint="uv falls back to PyPI; release wheels and managed Python need it" ;;
+        *)              hint="needed to download masquer" ;;
+      esac
+      case "$rc" in
+        56)             warn net "$h refused by a proxy: $hint" ;;
+        35|51|58|60|77) warn net "$h: TLS certificate not trusted (likely TLS inspection; corporate CA missing here): $hint" ;;
+        *)              warn net "$h not reachable: $hint" ;;
+      esac
     done
   else
     fail curl "missing: needed to download uv and the models"
@@ -309,7 +337,12 @@ install_uv() {
   url="https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$asset"
   T="$(mktemp -d)"
   echo "uv: downloading $asset ($UV_VERSION)"
-  curl -fsSL -m 300 -o "$T/$asset" "$url" || { echo "uv: download failed: $url" >&2; rm -rf "$T"; return 1; }
+  if ! curl -fsSL -m 300 -o "$T/$asset" "$url"; then
+    rm -rf "$T"
+    echo "uv: GitHub download failed; trying the uv wheel from PyPI"
+    install_uv_from_pypi "$t"
+    return $?
+  fi
   [ -s "$T/$asset" ] || { echo "uv: download is empty" >&2; rm -rf "$T"; return 1; }
   got="$(sha256_of "$T/$asset")"
   if [ "$got" != "$want" ]; then
@@ -327,6 +360,68 @@ install_uv() {
   fi
   rm -rf "$T"
   echo "uv: installed $("$BIN_DIR/uv" --version) to $BIN_DIR (SHA256 checked)"
+}
+
+# uv is also published on PyPI as wheels that carry the same binary. Used
+# when GitHub's release download host is blocked or TLS-inspected.
+uv_wheel() {
+  case "$1" in
+    x86_64-unknown-linux-gnu)  echo "uv-$UV_VERSION-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl 3da76cd4e2697de30928b8a8524bd39183ac1e08cb7e72833807c022b7cba6c4" ;;
+    aarch64-unknown-linux-gnu) echo "uv-$UV_VERSION-py3-none-manylinux_2_28_aarch64.whl be0799f1ad70c755d10de5aaf46af94199d4f16a992f90278f2662350cd3f4fe" ;;
+    x86_64-apple-darwin)       echo "uv-$UV_VERSION-py3-none-macosx_10_12_x86_64.whl c82954b1bd507e767b1d996c2865ea3eb7d464a479ec0e4d60f0b8e2e07dee45" ;;
+    aarch64-apple-darwin)      echo "uv-$UV_VERSION-py3-none-macosx_11_0_arm64.whl 2a56d1abf16337350e878b2c869b256b8448ecc4a722b98f8d41e1b3680a587b" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Extract one member of a zip (a wheel) to a file.
+unzip_member() {
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -p "$1" "$2" > "$3"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -I -c 'import sys, zipfile; open(sys.argv[3], "wb").write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]))' "$1" "$2" "$3"
+  elif command -v bsdtar >/dev/null 2>&1; then
+    bsdtar -xOf "$1" "$2" > "$3"
+  else
+    return 1
+  fi
+}
+
+install_uv_from_pypi() {
+  pair="$(uv_wheel "$1" || true)"
+  whl="${pair%% *}"
+  want="${pair##* }"
+  [ -n "$whl" ] || { echo "uv: no pinned PyPI wheel for $1" >&2; return 1; }
+  T="$(mktemp -d)"
+  index="$(curl -fsSL -m 60 https://pypi.org/simple/uv/ || true)"
+  url="$(printf '%s\n' "$index" | grep -o "https://[^\"#]*/$whl" | head -1 || true)"
+  if [ -z "$url" ]; then
+    echo "uv: $whl not found on PyPI (pypi.org blocked?)" >&2
+    rm -rf "$T"
+    return 1
+  fi
+  if ! curl -fsSL -m 300 -o "$T/$whl" "$url" || [ ! -s "$T/$whl" ]; then
+    echo "uv: download failed: $url" >&2
+    rm -rf "$T"
+    return 1
+  fi
+  got="$(sha256_of "$T/$whl")"
+  if [ "$got" != "$want" ]; then
+    echo "uv: SHA256 mismatch for $whl (got $got, want $want); nothing installed" >&2
+    rm -rf "$T"
+    return 1
+  fi
+  if ! { unzip_member "$T/$whl" "uv-$UV_VERSION.data/scripts/uv" "$T/uv" &&
+          unzip_member "$T/$whl" "uv-$UV_VERSION.data/scripts/uvx" "$T/uvx" &&
+          mkdir -p "$BIN_DIR" &&
+          install -m 755 "$T/uv" "$BIN_DIR/uv" &&
+          install -m 755 "$T/uvx" "$BIN_DIR/uvx"; }; then
+    echo "uv: unpack failed (needs unzip, python3 or bsdtar)" >&2
+    rm -rf "$T"
+    return 1
+  fi
+  rm -rf "$T"
+  echo "uv: installed $("$BIN_DIR/uv" --version) to $BIN_DIR from PyPI (SHA256 checked)"
 }
 
 pypi_reachable() {

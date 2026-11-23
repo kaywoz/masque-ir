@@ -22,8 +22,10 @@ T=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/kaywoz/masque-ir/mai
 Only check, change nothing: add `--check`. Other modes: `--dry-run`,
 `--verify`, `--ref TAG`. Any `FAIL` stops the install.
 
-Needs github.com, release-assets.githubusercontent.com and
-codeload.github.com. PyPI (pypi.org, files.pythonhosted.org) is only needed to
+Needs github.com and codeload.github.com. If
+release-assets.githubusercontent.com is blocked or TLS-inspected, `uv` comes
+from its PyPI wheel instead (same pinned version, SHA256 checked); a Python
+3.11+ must then already be installed. PyPI (pypi.org, files.pythonhosted.org) is only needed to
 build from source: when it's blocked, the installer uses the release's
 prebuilt wheel instead (checked against the release's `SHA256SUMS`). The wheel
 is pure Python, so the same file installs on Linux, WSL2 and macOS.
