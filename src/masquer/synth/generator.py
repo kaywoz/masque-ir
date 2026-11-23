@@ -169,6 +169,8 @@ class Generator:
                 v = email_value(self.world, ctx, c["name"]) if mail else None
                 if v is None:
                     v = ctx.resolve(c["name"])
+                if v is None and mail and c["type"] == "string":
+                    v = ""  # unmodelled email columns stay empty rather than random
                 if v is None:
                     v = self.value(table, actions, c["name"], c["type"], ts)
                 row[c["name"]] = v
@@ -194,6 +196,10 @@ class Generator:
                             rep[k] = self.rng.randint(1000, 65000)
                         elif k == "NetworkMessageId":
                             rep[k] = self.fake.uuid()
+                        elif k == "InternetMessageId" and rep[k]:
+                            rep[k] = f"<{self.fake.hex(18)}@{str(rep[k]).split('@')[-1]}"
+                        elif k == "ProcessUniqueId":
+                            rep[k] = self.rng.randint(10**6, 10**8)
                         elif k == "ProcessCreationTime":
                             rep[k] = iso(rep_ts - timedelta(seconds=self.rng.randint(0, 30)))
                     out.append(rep)
