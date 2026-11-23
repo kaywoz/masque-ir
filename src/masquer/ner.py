@@ -47,6 +47,7 @@ def trim(span: str) -> str:
 
 def keep(span: str) -> bool:
     return (len(span) >= 2 and not span.islower() and span.casefold() not in NOT_NAMES
+            and not re.search(r"\d", span)  # names carry no digits (Office16, a1b2)
             and not re.search(r"\.(exe|dll|ps1|bat|cmd|js|vbs)$", span, re.I))
 
 
