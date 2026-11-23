@@ -35,13 +35,21 @@ Status: early, usable. MIT licence.
 
 ```bash
 # Linux, WSL2 or macOS, as your normal user
-T=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/kaywoz/masque-ir/main/install.sh -o "$T" && [ -s "$T" ] && bash "$T" --with-ner; rm -f "$T"
+T=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/kaywoz/masque-ir/main/install.sh -o "$T" && [ -s "$T" ] && bash "$T" --with-ner --with-tui; rm -f "$T"
 ```
 
 To check the prerequisites without changing anything, add `--check`. Offline
 machines and proxies with TLS inspection: [docs/usage.md](docs/usage.md#install).
 
 ## Run
+
+Run `masquer` with no arguments to open the guided TUI: pick a case, import
+the exports, write the outbox (the egress gate runs first) and preview it with
+the tokens highlighted.
+
+<p align="center"><img src="docs/tui-review.png" alt="masquer TUI review tab: egress gate passed, outbox preview with tokens highlighted" width="720"></p>
+
+The same steps as commands:
 
 ```bash
 masquer case new CASE                                   # folder, mode 700

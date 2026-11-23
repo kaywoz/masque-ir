@@ -12,10 +12,13 @@
 #   --with-ner  also install the name-detection stage (gliner, CPU torch,
 #               the pinned GLiNER model, ~1.2 GB in total)
 #   --models-from DIR  take the model files from DIR instead of Hugging Face
+#   --with-tui  also install the guided TUI (Textual, pure Python); without
+#               PyPI its wheels come from the release (SHA256SUMS) or from
+#               the --wheel file's folder
 #   --help      this text
 #
-# Everything goes in the user's profile (~/.local); no sudo. Models are not
-# installed yet: they arrive with the detection stage.
+# Everything goes in the user's profile (~/.local); no sudo. The name model
+# is installed only with --with-ner.
 #
 # Works with bash 3.2 (macOS default) and newer.
 
@@ -70,7 +73,7 @@ info() { say INFO "$1" "$2"; }
 warn() { say WARN "$1" "$2"; warns=$((warns + 1)); }
 fail() { say FAIL "$1" "$2"; fails=$((fails + 1)); }
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 && /^#/ {sub(/^# ?/, ""); print; next} NR > 1 {exit}' "$0"; }
 
 # --- helpers ---------------------------------------------------------------
 
@@ -485,6 +488,19 @@ fetch_release_wheel() {
     rm -rf "$W"
     return 1
   fi
+  if [ "$with_tui" = yes ]; then
+    # The TUI's dependency wheels: every other .whl in SHA256SUMS, each checked.
+    awk -v f="$whl" '{n=$2; sub(/^\*/, "", n); sub(/^dist\/(deps\/)?/, "", n)} n ~ /\.whl$/ && n != f {print $1, n}' \
+      "$W/SHA256SUMS" > "$W/deps.txt"
+    while read -r want dep; do
+      if ! curl -fsSL -m 120 -o "$W/$dep" "$base/$dep" || [ ! -s "$W/$dep" ] ||
+         [ "$(sha256_of "$W/$dep")" != "$want" ]; then
+        echo "masquer: TUI dependency $dep missing or SHA256 mismatch in release $tag; nothing installed" >&2
+        rm -rf "$W"
+        return 1
+      fi
+    done < "$W/deps.txt"
+  fi
   echo "$W/$whl"
 }
 
@@ -524,24 +540,28 @@ run_install() {
   fi
   echo
   install_uv || return 1
-  extra=""
+  extras=""
   noindex="--no-index"
   pyreq=">=3.11"
+  [ "$with_tui" = yes ] && extras="tui"
   if [ "$with_ner" = yes ]; then
-    extra="[ner]"
+    extras="${extras:+$extras,}ner"
     noindex=""  # gliner and CPU torch come from PyPI and download.pytorch.org
     # CPU-only torch: the default Linux build pulls several GB of CUDA libraries.
     # (pyproject's tool.uv.sources isn't applied to URL installs; this is.)
     export UV_TORCH_BACKEND=cpu
     pyreq=">=3.11,<3.14"  # torch.jit warns it may break on 3.14+
   fi
+  extra="${extras:+[$extras]}"
   uvbin="$(command -v uv 2>/dev/null || echo "$BIN_DIR/uv")"
 
   if [ -n "$wheel" ]; then
     # Local wheel: no index, no source build.
     [ -s "$wheel" ] || { echo "masquer: wheel $wheel not found or empty" >&2; return 1; }
     echo "masquer: installing local wheel $(basename "$wheel")"
-    UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --python "$pyreq" "masquer$extra @ file://$(cd "$(dirname "$wheel")" && pwd)/$(basename "$wheel")" ||
+    wdir="$(cd "$(dirname "$wheel")" && pwd)"
+    # shellcheck disable=SC2086
+    UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --find-links "$wdir" --python "$pyreq" "masquer$extra @ file://$wdir/$(basename "$wheel")" ||
       { echo "masquer: install from wheel failed" >&2; return 1; }
   else
     [ -n "$ref" ] || ref="$(latest_tag)"
@@ -552,7 +572,8 @@ run_install() {
     if [ "$use_wheel" = yes ]; then
       echo "masquer: installing the $ref release wheel (no PyPI needed)"
       w="$(fetch_release_wheel "$ref")" || return 1
-      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --python "$pyreq" "masquer$extra @ file://$w" ||
+      # shellcheck disable=SC2086
+      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --find-links "$(dirname "$w")" --python "$pyreq" "masquer$extra @ file://$w" ||
         { echo "masquer: install from wheel failed" >&2; rm -rf "$(dirname "$w")"; return 1; }
       rm -rf "$(dirname "$w")"
     else
@@ -602,6 +623,7 @@ run_dry_run() {
     echo "     the release wheel (SHA256 from SHA256SUMS) when PyPI is blocked or --prefer-wheel,"
     echo "     otherwise a source build from GitHub (needs PyPI)"
   fi
+  [ "$with_tui" = yes ] && echo "     with the TUI extra (Textual; without PyPI its wheels come from the release, SHA256 checked)"
   echo "  4. create $PREFIX_DATA and $PREFIX_CONF (mode 700, for the local deny-lists)"
   echo "  5. run --verify"
   echo "Nothing is changed."
@@ -614,6 +636,7 @@ ref=""
 wheel=""
 prefer_wheel=no
 with_ner=no
+with_tui=no
 models_from=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -626,6 +649,7 @@ while [ $# -gt 0 ]; do
                wheel="$2"; shift ;;
     --prefer-wheel) prefer_wheel=yes ;;
     --with-ner) with_ner=yes ;;
+    --with-tui) with_tui=yes ;;
     --models-from) [ $# -ge 2 ] || { echo "install.sh: --models-from needs a folder" >&2; exit 2; }
                    models_from="$2"; with_ner=yes; shift ;;
     --help|-h) usage; exit 0 ;;

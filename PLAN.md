@@ -71,6 +71,8 @@ WSL: raise `memory=` in `.wslconfig` if WSL sees under ~8 GB.
 
 - Detection stage: GLiNER `knowledgator/gliner-pii-edge-v1.0` at threshold 0.4, chosen 2026-11-23 from a test on synthetic Nordic text (name-part recall: edge 100 %, `gliner-pii-base` 87 %, `gliner_multi_pii` 73 %; edge fastest, ~4 ms/text batched). Real-model run (9 tables × 80 rows, 4,712 canaries): 0 leaks of any kind. `--allow-without-ner` only needed when the model isn't installed.
 
+- TUI core (`feat/tui-core`): cases, import and review screens over the `Case` API; extra `masquer[tui]`, `install.sh --with-tui`, release attaches the dependency wheels (SHA256SUMS). Headless test: the TUI's outbox is byte-identical to the CLI's for the same import.
+
 ## Next
 - Optional Qwen recheck of flagged spans (parked until real data shows gaps).
 - Outbox size: a full 66-table export is 7 MB (53 parts); add per-table summaries and a `--tables`/time-window filter for chat-sized outboxes.

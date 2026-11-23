@@ -1,6 +1,6 @@
-# Builds masquer on a version tag and attaches the wheel, the sdist and
-# SHA256SUMS to a GitHub release. install.sh uses the wheel when PyPI is
-# blocked (Linux, WSL2, macOS: the wheel is pure Python).
+# Builds masquer on a version tag and attaches the wheel, the sdist, the TUI's
+# dependency wheels and SHA256SUMS to a GitHub release. install.sh uses the
+# wheels when PyPI is blocked (Linux, WSL2, macOS: all pure Python).
 name: release
 
 on:
@@ -25,11 +25,15 @@ jobs:
           [ "$want" = "$got" ] || { echo "tag $GITHUB_REF_NAME != pyproject version $got"; exit 1; }
 
       - name: Tests
-        run: uv run --frozen pytest -q
+        run: uv run --frozen --extra tui pytest -q
 
       - name: Build
         run: |
           uv build
+          # TUI dependencies as wheels, pinned and hash-checked from uv.lock.
+          uv export --frozen --extra tui --no-dev --no-emit-project --format requirements-txt > tui-req.txt
+          python3 -m pip download --require-hashes --only-binary=:all: --no-deps -r tui-req.txt -d dist
+          ls dist/*.whl | grep -v -- '-py3-none-any.whl$' && { echo "non-pure wheel in dist"; exit 1; } || true
           cd dist && sha256sum -- *.whl *.tar.gz > SHA256SUMS && cat SHA256SUMS
 
       - name: Release

@@ -11,6 +11,9 @@ dependencies = []
 # Name-detection stage. On Linux, torch comes from the CPU-only index (the
 # default PyPI build pulls several GB of CUDA libraries).
 ner = ["gliner==0.2.30", "torch>=2.4"]
+# Guided TUI (masquer with no arguments). Pure Python; the release attaches
+# these wheels for installs without PyPI.
+tui = ["textual>=8.2"]
 
 [project.scripts]
 masquer = "masquer.cli:main"
