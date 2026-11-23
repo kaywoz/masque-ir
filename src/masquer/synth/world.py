@@ -20,6 +20,8 @@ SYS32 = r"C:\Windows\System32"
 BINARIES = {
     "explorer.exe": (r"C:\Windows", "Microsoft Windows", "Microsoft Corporation", "Microsoft® Windows® Operating System", 5_500_000),
     "svchost.exe": (SYS32, "Microsoft Windows Publisher", "Microsoft Corporation", "Microsoft® Windows® Operating System", 57_000),
+    "wininit.exe": (SYS32, "Microsoft Windows Publisher", "Microsoft Corporation", "Microsoft® Windows® Operating System", 450_000),
+    "userinit.exe": (SYS32, "Microsoft Windows", "Microsoft Corporation", "Microsoft® Windows® Operating System", 30_000),
     "services.exe": (SYS32, "Microsoft Windows Publisher", "Microsoft Corporation", "Microsoft® Windows® Operating System", 730_000),
     "cmd.exe": (SYS32, "Microsoft Windows", "Microsoft Corporation", "Microsoft® Windows® Operating System", 323_000),
     "powershell.exe": (SYS32 + r"\WindowsPowerShell\v1.0", "Microsoft Windows", "Microsoft Corporation", "Microsoft® Windows® Operating System", 455_000),
@@ -63,6 +65,9 @@ class User:
     sid: str
     object_id: str
     netbios: str
+
+
+SYSTEM_USER = User("", "", "system", "", "S-1-5-18", "", "NT AUTHORITY")
 
 
 @dataclass
@@ -109,6 +114,8 @@ class World:
         self.victims = rng.sample(self.devices, k=max(2, devices // 4))
         self.c2 = [f"cdn-{fake.hex(4)}.test", f"login-{fake.hex(3)}.test"]
         self.attacker_ips = [f"198.51.100.{rng.randint(1, 254)}" for _ in range(3)]
+        self.dc_ip = fake.mark("ip_private", f"10.0.0.{rng.randint(2, 20)}")
+        self.story: dict[str, tuple[list, int, User]] = {}  # victim device -> (steps, next step, user)
 
     def _user(self) -> User:
         first, last = self.f.person()
@@ -162,13 +169,15 @@ class Context:
         """Value for a column the world models, else None."""
         w, f, d, u, p, pp, gp = self.world, self.world.f, self.device, self.user, self.proc, self.parent, self.grandparent
         iso = lambda t: t.strftime("%Y-%m-%dT%H:%M:%S.%f") + "0Z"  # noqa: E731
+        acct0 = p.user or SYSTEM_USER
         simple = {
             "Timestamp": iso(self.ts),
             "DeviceName": d.name, "DeviceId": d.device_id, "OSPlatform": d.os,
             "MachineGroup": f"{w.company[1]}-{'servers' if 'Server' in d.os else 'clients'}",
             "ReportId": self.report_id, "TenantId": w.tenant,
-            "AccountName": u.sam, "AccountDomain": u.netbios, "AccountSid": u.sid, "AccountUpn": u.upn,
-            "AccountObjectId": u.object_id, "AccountDisplayName": f"{u.first} {u.last}",
+            "AccountName": acct0.sam, "AccountDomain": acct0.netbios, "AccountSid": acct0.sid,
+            "AccountUpn": acct0.upn, "AccountObjectId": acct0.object_id,
+            "AccountDisplayName": f"{acct0.first} {acct0.last}".strip(),
             "LocalIP": d.ip, "LocalIPType": "Private", "LocalPort": self.world.rng.randint(49152, 65535),
             "ActionType": self.action or None,
         }
@@ -177,7 +186,7 @@ class Context:
         for prefix, pr in (("InitiatingProcessParent", gp), ("InitiatingProcess", pp), ("Process", p), ("", p)):
             if col.startswith(prefix):
                 rest = col[len(prefix):]
-                acct = pr.user or u
+                acct = pr.user or SYSTEM_USER
                 vals = {
                     "FileName": pr.name, "FolderPath": f"{pr.folder}\\{pr.name}", "SHA1": pr.sha1,
                     "SHA256": pr.sha256, "MD5": pr.md5, "FileSize": pr.size, "CommandLine": pr.cmd,
@@ -266,45 +275,74 @@ def _attack_steps(w: World, d: Device, u: User):
 from .values import INJECTIONS  # noqa: E402
 
 
+# Who starts whom: parent -> grandparent, and which processes run as SYSTEM.
+GRANDPARENT = {"explorer.exe": "userinit.exe", "services.exe": "wininit.exe", "svchost.exe": "services.exe"}
+SYSTEM_PROCS = {"wininit.exe", "services.exe", "svchost.exe"}
+# Benign network per process: (host, port); "dc" is the domain controller.
+BENIGN_NET = {
+    "outlook.exe": [("outlook.office365.com", 443)],
+    "teams.exe": [("teams.microsoft.com", 443)],
+    "msedge.exe": [("login.microsoftonline.com", 443), ("www.bing.com", 443)],
+    "chrome.exe": [("www.google.com", 443)],
+    "svchost.exe": [("dc", 53), ("dc", 389), ("dc", 88), ("windowsupdate.com", 443)],
+}
+
+
 def make_context(w: World, table: str, actions: list[str], ts: datetime, report_id: int) -> Context:
     rng = w.rng
+    net_table = "RemoteIP" in table or table == "DeviceNetworkEvents"
     malicious = rng.random() < 0.25
     d = rng.choice(w.victims if malicious else w.devices)
     u = rng.choice(d.users)
-    boot = ts - timedelta(hours=rng.randint(2, 48))
-    sys_gp = w.proc(d, "services.exe", r"C:\Windows\system32\services.exe", boot, None)
-    remote_ip, remote_port, remote_url = "", 0, ""
     if malicious:
-        parent_name, child_name, cmd, net = rng.choice(_attack_steps(w, d, u))
+        # The storyline advances in order per victim, so time order matches it.
+        if d.name not in w.story:
+            w.story[d.name] = (_attack_steps(w, d, u), 0, u)
+        steps, i, u = w.story[d.name]
+        w.story[d.name] = (steps, i + 1, u)
+        parent_name, child_name, cmd, net = steps[i % len(steps)]
     else:
-        parent_name, child_name, cmd = rng.choice(BENIGN_CHAINS)
-        net = rng.choice([("login.microsoftonline.com", 443), ("outlook.office365.com", 443),
-                          (w.ad_domain, 389), ("dns", 53), None])
-    gp = w.proc(d, "explorer.exe", r"C:\Windows\Explorer.EXE", boot + timedelta(minutes=rng.randint(1, 30)), u) \
-        if parent_name != "svchost.exe" else sys_gp
-    p_created = ts - timedelta(minutes=rng.randint(1, 90))
+        chains = [c for c in BENIGN_CHAINS if c[1] in BENIGN_NET] if net_table else BENIGN_CHAINS
+        parent_name, child_name, cmd = rng.choice(chains)
+        net = rng.choice(BENIGN_NET[child_name]) if child_name in BENIGN_NET and (net_table or rng.random() < 0.5) else None
+        if net_table and rng.random() < 0.15:
+            net = None
+    if net_table and not net:  # a listening socket: a SYSTEM service
+        parent_name, child_name, cmd = "services.exe", "svchost.exe", "svchost.exe -k netsvcs -p"
+    boot = ts - timedelta(hours=rng.randint(2, 48))
+    gp_name = GRANDPARENT.get(parent_name, "explorer.exe")
+    gp = w.proc(d, gp_name, gp_name, boot, None if gp_name in SYSTEM_PROCS | {"userinit.exe"} else u)
     p_folder = f"C:\\Users\\{u.sam}\\AppData\\Local\\Temp" if parent_name == "a.exe" else None
-    parent = w.proc(d, parent_name, f'"{parent_name}"', p_created, u if parent_name != "svchost.exe" else None, p_folder)
-    child = w.proc(d, child_name, cmd, ts - timedelta(seconds=rng.randint(0, 30)), u)
+    parent = w.proc(d, parent_name, f'"{parent_name}"', ts - timedelta(minutes=rng.randint(1, 90)),
+                    None if parent_name in SYSTEM_PROCS else u, p_folder)
+    child = w.proc(d, child_name, cmd, ts - timedelta(seconds=rng.randint(0, 30)),
+                   None if child_name in SYSTEM_PROCS and parent_name in SYSTEM_PROCS else u)
+    remote_ip, remote_port, remote_url = "", 0, ""
     if net:
         host, port = net
         remote_port = port
-        if host == "dns":
-            remote_ip = f"10.{rng.randint(0, 3)}.0.{rng.randint(2, 20)}"
+        if host == "dc" or host == w.ad_domain:
+            remote_ip = w.dc_ip
         elif host.startswith("10."):
             remote_ip = host
-        elif host.endswith((".test",)) or malicious and port in (80, 443):
+        elif host.endswith(".test"):
             remote_ip = rng.choice(w.attacker_ips)
             remote_url = host
+        elif host.endswith(".example"):
+            remote_ip = w.f.mark("ip_customer", f"203.0.113.{rng.randint(1, 254)}")
+            remote_url = host
         else:
-            remote_ip = w.f.mark("ip_customer", f"203.0.113.{rng.randint(1, 254)}") if host.endswith(".example") \
-                else f"192.0.2.{rng.randint(1, 254)}"
+            remote_ip = f"192.0.2.{rng.randint(1, 254)}"
             remote_url = host
     action = rng.choice(actions) if actions else ""
     if table == "DeviceProcessEvents":
         action = "ProcessCreated"
     elif table == "DeviceNetworkEvents":
-        action = rng.choice(NETWORK_ACTIONS) if remote_ip else "ListeningConnectionCreated"
+        action = rng.choice(NETWORK_ACTIONS[:4]) if remote_ip else "ListeningConnectionCreated"
+    if net_table:
+        # Network rows: the connecting process is the initiating process.
+        return Context(w, d, u, ts, child, child, parent, report_id, remote_ip, remote_port, remote_url,
+                       action, malicious)
     return Context(w, d, u, ts, child, parent, gp, report_id, remote_ip, remote_port, remote_url, action, malicious)
 
 
@@ -335,5 +373,14 @@ def email_value(w: World, ctx: Context, col: str):
         "EmailDirection": "Inbound" if ctx.malicious else "Intra-org",
         "DeliveryAction": "Delivered", "DeliveryLocation": "Inbox/folder",
         "SenderIPv4": w.rng.choice(w.attacker_ips) if ctx.malicious else ctx.device.ip,
+        "SenderIPv6": "",
+        "InternetMessageId": f"<{m['id'][:18]}@{sender_domain}>",
+        "ThreatTypes": "Phish" if ctx.malicious else "",
+        "ThreatNames": "", "DetectionMethods": "", "Cc": "", "Context": "", "AdditionalFields": "",
+        "AuthenticationDetails": '{"SPF":"pass","DKIM":"pass","DMARC":"pass"}' if not ctx.malicious
+        else '{"SPF":"fail","DKIM":"none","DMARC":"fail"}',
+        "OrgLevelAction": "", "UserLevelAction": "", "OrgLevelPolicy": "", "UserLevelPolicy": "",
+        "AttachmentCount": 1 if ctx.malicious else 0, "UrlCount": 1 if ctx.malicious else 0,
+        "ConfidenceLevel": '{"Phish":"High"}' if ctx.malicious else "",
     }
     return vals.get(col)

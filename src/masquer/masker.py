@@ -200,8 +200,8 @@ class Masker:
 
 # Fields Defender sets per event: a repeat of the same activity differs in
 # these and nothing else. The collapsed row keeps the first event's values.
-EVENT_FIELDS = {"Timestamp", "ReportId", "ProcessId", "ProcessCreationTime", "LocalPort",
-                "NetworkMessageId", "LogonId", "EventId"}
+EVENT_FIELDS = {"Timestamp", "ReportId", "ProcessId", "ProcessCreationTime", "ProcessUniqueId", "LocalPort",
+                "NetworkMessageId", "InternetMessageId", "LogonId", "EventId"}
 
 
 def collapse(rows: list[dict], gap_seconds: int = 3600) -> list[dict]:
