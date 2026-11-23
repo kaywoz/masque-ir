@@ -12,10 +12,7 @@ users, emails, IPs, SIDs and national IDs that must not leave the machine.
 `masquer` replaces every identifier with a token on your machine, writes a
 file you paste into the chat, and puts the real values back into the answer:
 
-```
-Defender export ─► masquer import/outbox ─► paste into chat ─► save answer ─► masquer restore ─► report with real values
-       (local)          tokens, defang          (cloud)                            (local)
-```
+<p align="center"><img src="docs/flow.svg" alt="Defender export to import, egress gate and outbox on your machine; you paste into the cloud chat, save the answer, restore puts the real values back" width="560"></p>
 
 - **No API, no network.** You paste a text file into the chat yourself.
 - **Egress gate.** Nothing is written for pasting while any known original, or any new email, IP, ID or similar match, is still in it.
