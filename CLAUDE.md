@@ -11,6 +11,11 @@ and restores the original values in the answer. Design and decisions:
 [`PLAN.md`](PLAN.md). Decisions there are kaywoz's; don't re-decide them,
 propose a change explicitly.
 
+Docs, by reader: `README.md` for analysts finding the tool (problem, install,
+run, before/after); `docs/usage.md` for operators (flags, offline install,
+lists); `docs/how-it-works.md` for contributors (detectors, gate, synth).
+Update the matching doc in the same change as the code.
+
 ## 2. Data rules (non-negotiable)
 
 - **No real data in git, ever**: no real exports, outboxes, inboxes,
