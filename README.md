@@ -1,4 +1,4 @@
-# *masque-(i)r**
+# *masque-(i)r (pronounced masker)*
 
 `masquer` pseudonymises and defangs Microsoft Defender exports on your own
 machine, writes a file you paste into a cloud LLM chat, and fills the answer
