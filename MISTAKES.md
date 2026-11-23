@@ -65,3 +65,11 @@ turns out to have been based on a misunderstanding.
 - **Root cause:** the hand-kept "common ActionType" list was written from memory, not checked against the schema reference.
 - **Fix applied:** moved to `DeviceEvents`.
 - **Rule going forward:** hand-kept schema facts in the generator get a source or are marked unverified in the code.
+
+### 2026-11-23 — docs (logo edited without asking)
+
+- **Trigger:** misunderstood request
+- **What happened:** kaywoz shared a logo image for the README. The copy that reached the session was an RGB WebP with no alpha channel and a grey checkerboard baked into the pixels. Claude keyed the checkerboard out and committed its own cleaned version. kaywoz: "it should be transparent already".
+- **Root cause:** Claude edited the asset to fit what it received instead of reporting that the received copy had lost its transparency.
+- **Fix applied:** none to the logo; kaywoz's original file can replace `docs/logo.png`.
+- **Rule going forward:** if a supplied asset doesn't match what it should be (no alpha, wrong size or format), report what was received (`mode`, `format`) and ask for the original file before editing it.
