@@ -44,7 +44,7 @@ the original values, locally.
 5. Defang: URLs/domains (`hxxp`, `[.]`), long blobs -> hash + length.
 6. Egress gate: regex + local deny-list scan of the output; any hit blocks writing `outbox.md`.
 7. `outbox.md`: paste-ready prompt + data; tells the model to keep `«…»` tokens verbatim.
-8. Re-hydrate: `inbox.md` -> `report.md` with originals filled in; unknown/altered tokens flagged, never guessed. `report.redacted.md` and `outbox.md` kept for audit.
+8. Re-hydrate: `inbox.md` -> `report.md` with originals filled in; unknown/altered tokens flagged, never guessed. A token missing only its `« »` is exact and restored without a marker, counted in the summary (kaywoz 2026-11-23, after Copilot dropped them on every token); damaged tokens are marked, not guessed. `report.redacted.md` and `outbox.md` kept for audit.
 
 ## Security
 - Mapping store (SQLite) per case, folder 700 / files 600, on an encrypted disk; deleted or archived with the case.

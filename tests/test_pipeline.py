@@ -309,3 +309,24 @@ def test_outbox_parts_respect_size(synth_case):
     assert len(parts) > 1 and all(len(t) <= 20_000 + 32 for t in texts)
     text = "".join(texts).casefold()
     assert not {v for k, vals in canaries.items() if k not in NER_KINDS for v in vals if v.casefold() in text}
+
+
+def test_restore_bare_and_damaged_tokens(synth_case):
+    case, _, _ = synth_case
+    st = case.store()
+    lookup = st.lookup()
+    st.close()
+    tok, original = next((t, o) for t, o in lookup.items() if t.startswith("«ACCOUNT_"))
+    bare = tok.strip("«»")
+    kind, num = bare.rsplit("_", 1)
+    damaged = "«" + bare[0] + "*" + bare[2:] + "»"   # Copilot's stray '*'
+    inbox = case.root / "inbox-7.md"
+    inbox.write_text(f"Bare {bare}. Padded {kind}_{int(num)}. Broken {damaged}. Text «not a token».",
+                     encoding="utf-8")
+    dest, stats = case.restore(inbox)
+    out = dest.read_text("utf-8")
+    assert f"Bare {original}." in out                       # quiet: only the « » were missing
+    assert f"{original} ⚠(was {kind}_{int(num)})" in out    # padding changed: still marked
+    assert f"{damaged} ⚠ damaged token" in out              # never guessed
+    assert "«not a token»." in out
+    assert stats == {"restored_bare": 1, "restored_altered": 1, "damaged": 1}
