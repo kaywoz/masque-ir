@@ -93,3 +93,32 @@ def test_storyline_is_coherent(tmp_path):
     for d in victims:
         assert by_dev[d]["winword.exe"] < by_dev[d]["certutil.exe"]
     assert all(r["SenderIPv4"] == "" for r in mail if r["EmailDirection"] == "Intra-org")
+
+
+def test_campaign_realism(tmp_path):
+    tables = ["DeviceProcessEvents", "DeviceNetworkEvents", "DeviceNetworkInfo", "AlertEvidence"]
+    generate(tmp_path, tables=tables, rows=120, seed=9)
+    procs = read_csv(tmp_path / "DeviceProcessEvents.csv")
+    net = read_csv(tmp_path / "DeviceNetworkEvents.csv")
+    # victims are workstations
+    docm = [r for r in procs if r["FileName"] == "winword.exe" and ".docm" in r["ProcessCommandLine"]]
+    assert docm and all("-srv-" not in r["DeviceName"] for r in docm)  # device names carry the kind
+    # one payload build: same hashes and size on every host
+    payload = [r for r in procs if r["FileName"] == "a.exe"]
+    assert len({r["DeviceName"] for r in payload}) > 1
+    assert len({(r["SHA256"], r["FileSize"]) for r in payload}) == 1
+    # the same storyline process shows the same PID and creation time in both tables
+    p_ids = {(r["DeviceName"], r["ProcessCommandLine"]): (r["ProcessId"], r["ProcessCreationTime"])
+             for r in procs if r["FileName"] == "certutil.exe"}
+    n_ids = {(r["DeviceName"], r["InitiatingProcessCommandLine"]):
+             (r["InitiatingProcessId"], r["InitiatingProcessCreationTime"])
+             for r in net if r["InitiatingProcessFileName"] == "certutil.exe"}
+    shared = p_ids.keys() & n_ids.keys()
+    assert shared and all(p_ids[k] == n_ids[k] for k in shared)
+    # adapter facts, not sentences; registry fields mostly empty outside registry events
+    info = read_csv(tmp_path / "DeviceNetworkInfo.csv")
+    for col in ("NetworkAdapterVendor", "NetworkAdapterType", "TunnelType", "OnboardingStatus"):
+        assert all(len(r[col].split()) <= 2 for r in info), col
+    assert all(r["DnsAddresses"].startswith("[") for r in info)
+    ev = read_csv(tmp_path / "AlertEvidence.csv")
+    assert sum(1 for r in ev if r["RegistryKey"]) < len(ev) * 0.3

@@ -71,6 +71,9 @@ class User:
 SYSTEM_USER = User("", "", "system", "", "S-1-5-18", "", "NT AUTHORITY")
 
 
+PAYLOADS = {"a.exe"}  # the campaign's dropped binaries
+
+
 @dataclass
 class Device:
     name: str
@@ -112,7 +115,10 @@ class World:
         self.tenant = fake.tenant_id()
         self.users = [self._user() for _ in range(users)]
         self.devices = [self._device(i) for i in range(devices)]
-        self.victims = rng.sample(self.devices, k=max(2, devices // 4))
+        # Phishing victims are workstations: servers don't open mail attachments.
+        clients = [d for d in self.devices if "Server" not in d.os] or self.devices
+        self.victims = rng.sample(clients, k=min(len(clients), max(2, devices // 4)))
+        self.payload_size = rng.randint(180_000, 900_000)  # one a.exe build per campaign
         self.c2 = [f"cdn-{fake.hex(4)}.test", f"login-{fake.hex(3)}.test"]
         self.attacker_ips = [f"198.51.100.{rng.randint(1, 254)}" for _ in range(3)]
         self.dc_ip = fake.mark("ip_private", f"10.0.0.{rng.randint(2, 20)}")
@@ -120,6 +126,9 @@ class World:
         # offset, so the same event lines up across tables.
         self.story: dict[str, tuple[list, User, datetime]] = {}
         self.story_pos: dict[tuple[str, str], int] = {}  # (table, victim) -> next step
+        # One process per storyline step and per name on each victim, so every
+        # table shows the same PID, creation time, size and hashes for it.
+        self.story_procs: dict[tuple, Proc] = {}
 
     def _user(self) -> User:
         first, last = self.f.person()
@@ -146,8 +155,9 @@ class World:
         else:  # dropped or downloaded: unsigned, in a user folder
             fol = folder or self.f.user_path().rsplit("\\", 0)[0]
             signer = company = product = ""
-            size = self.rng.randint(40_000, 2_500_000)
-        sha1, sha256, md5 = fake_hashes(f"{fol}\\{name}")
+            size = self.payload_size if name in PAYLOADS else self.rng.randint(40_000, 2_500_000)
+        # The campaign's payload is one build: same hashes wherever it lands.
+        sha1, sha256, md5 = fake_hashes(name if name in PAYLOADS else f"{fol}\\{name}")
         return Proc(name, fol, signer, company, product, size, sha1, sha256, md5, cmd,
                     dev.pid, created, user)
 
@@ -281,8 +291,9 @@ def _attack_steps(w: World, d: Device, u: User):
         ("powershell.exe", "powershell.exe",
          f'powershell.exe Send-MailMessage -To {f.email()} -Subject "Utbetalning {f.iban()}"', ("smtp." + w.mail_domain, 587)),
     ]
-    if w.injections:
-        steps.append(("cmd.exe", "powershell.exe", f'powershell.exe -c "Write-Host \'{w.rng.choice(INJECTIONS)}\'"', None))
+    if w.injections:  # early, so short exports carry it too: text the attacker planted in a command line
+        steps.insert(2, ("powershell.exe", "powershell.exe",
+                         f'powershell.exe -c "Write-Host \'{w.rng.choice(INJECTIONS)}\'"', None))
     t, out = 0, []
     for s in steps:
         out.append((*s, t))
@@ -313,6 +324,7 @@ def make_context(w: World, table: str, actions: list[str], ts: datetime, report_
     d = rng.choice(w.victims if malicious else w.devices)
     u = rng.choice(d.users)
     step = None
+    step_no = -1
     if malicious:
         # Each table walks the victim's storyline once, in order; every step
         # has a fixed time, so tables agree. The lure mail comes first.
@@ -324,6 +336,7 @@ def make_context(w: World, table: str, actions: list[str], ts: datetime, report_
         if i < limit:
             w.story_pos[(table, d.name)] = i + 1
             step = steps[i]
+            step_no = i
             ts = start - timedelta(seconds=rng.randint(180, 1200)) if table.startswith("Email") \
                 else start + timedelta(seconds=step[4], microseconds=rng.randint(0, 999999))
         else:
@@ -342,13 +355,28 @@ def make_context(w: World, table: str, actions: list[str], ts: datetime, report_
         parent_name, child_name, cmd = "services.exe", "svchost.exe", "svchost.exe -k netsvcs -p"
     boot = ts - timedelta(hours=rng.randint(2, 48))
     gp_name = GRANDPARENT.get(parent_name, "explorer.exe")
-    gp = w.proc(d, gp_name, gp_name, boot, None if gp_name in SYSTEM_PROCS | {"userinit.exe"} else u)
-    p_folder = f"C:\\Users\\{u.sam}\\AppData\\Local\\Temp" if parent_name == "a.exe" else None
-    parent = w.proc(d, parent_name, f'"{parent_name}"', ts - timedelta(minutes=rng.randint(1, 90)),
-                    None if parent_name in SYSTEM_PROCS else u, p_folder)
-    child = w.proc(d, child_name, cmd, ts - timedelta(seconds=rng.randint(0, 30)),
-                   None if child_name in SYSTEM_PROCS and parent_name in SYSTEM_PROCS else u,
-                   f"C:\\Users\\{u.sam}\\AppData\\Local\\Temp" if child_name == "a.exe" else None)
+    temp = f"C:\\Users\\{u.sam}\\AppData\\Local\\Temp"
+
+    def make(name, cmd_, created, user, folder=None, key=None):
+        """A storyline process is created once (key) and reused by every table."""
+        if key is None:
+            return w.proc(d, name, cmd_, created, user, folder)
+        if key not in w.story_procs:
+            w.story_procs[key] = w.proc(d, name, cmd_, created, user, folder)
+        return w.story_procs[key]
+
+    story = step is not None
+    gp = make(gp_name, gp_name, boot, None if gp_name in SYSTEM_PROCS | {"userinit.exe"} else u,
+              key=(d.name, "name", gp_name) if story else None)
+    parent = make(parent_name, f'"{parent_name}"', ts - timedelta(minutes=rng.randint(1, 90)),
+                  None if parent_name in SYSTEM_PROCS else u, temp if parent_name == "a.exe" else None,
+                  key=(d.name, "name", parent_name) if story else None)
+    child = make(child_name, cmd, ts - timedelta(seconds=rng.randint(0, 30)),
+                 None if child_name in SYSTEM_PROCS and parent_name in SYSTEM_PROCS else u,
+                 temp if child_name == "a.exe" else None,
+                 key=(d.name, "step", step_no) if story else None)
+    if story:  # a later step's parent of this name is this very process
+        w.story_procs.setdefault((d.name, "name", child_name), child)
     remote_ip, remote_port, remote_url = "", 0, ""
     if net:
         host, port = net
@@ -387,7 +415,7 @@ def email_value(w: World, ctx: Context, col: str):
             subject = w.rng.choice(LURES[:1] + LURES[4:]).format(n=w.rng.randint(1000, 9999), iban=f.iban(), first=u.first, last=u.last)
             if "{first}" in subject or "Lönespec_" in subject:
                 f.mark("file_pii", subject.split(": ", 1)[-1])
-            if w.injections and w.rng.random() < 0.1:
+            if w.injections and w.rng.random() < 0.25:
                 subject = w.rng.choice(INJECTIONS)
         else:
             other = w.rng.choice(w.users)

@@ -84,8 +84,25 @@ class Generator:
     def string(self, table: str, actions: list[str], name: str, n: str):
         f = self.fake
         # (pattern, match on original-case name?, factory). First match wins.
+        ip_list = lambda: json.dumps([f.ip()])  # noqa: E731
         rules = [
             (r"^actiontype$", False, lambda: self.rng.choice(actions) if actions else "Event"),
+            # DeviceNetworkInfo: adapter facts, not free text.
+            (r"^networkadaptername$", False, lambda: self.rng.choice(["Ethernet", "Wi-Fi", "Ethernet 2"])),
+            (r"^networkadaptertype$", False, lambda: self.rng.choice(["Ethernet", "Wireless80211"])),
+            (r"^networkadapterstatus$", False, lambda: self.rng.choice(["Up", "Up", "Down"])),
+            (r"^networkadaptervendor$", False, lambda: self.rng.choice(["Intel Corporation", "Realtek", "Microsoft"])),
+            (r"^tunneltype$", False, lambda: "None"),
+            (r"^onboardingstatus$", False, lambda: "Onboarded"),
+            (r"^(ipv4dhcp|ipv6dhcp|defaultgateways|dnsaddresses)$", False, ip_list),
+            (r"^ipaddresses$", False, lambda: json.dumps([{"IPAddress": f.ip(), "SubnetPrefix": 24,
+                                                           "AddressType": "Private"}])),
+            (r"^connectednetworks$", False, lambda: json.dumps([{"Name": self.rng.choice(["corp", "guest"]),
+                                                                 "Category": "Domain",
+                                                                 "IsConnectedToInternet": True}])),
+            # Registry fields belong to registry events; elsewhere mostly empty.
+            (r"^registry(key|valuename|valuedata)$", False,
+             lambda: self.registry(name) if table == "DeviceRegistryEvents" or self.rng.random() < 0.1 else ""),
             (r"tenantid$", False, f.tenant_id),
             (r"(sha1|signerhash)$", False, lambda: f.hex(40)),
             (r"sha256$", False, lambda: f.hex(64)),
@@ -112,7 +129,6 @@ class Generator:
             (r"(folderpath|filepath|^path)$", False, lambda: f.user_path(f.file_name())),
             (r"FileName$", True, f.file_name),
             (r"ProcessName$", True, f.file_name),
-            (r"(registrykey)$", False, lambda: f"HKEY_USERS\\{f.sid()}\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
             (r"(phone\w*|mobile)$", False, f.phone),
             (r"^(address|streetaddress)$", False, f.postal_address),
             (r"versioninfocompanyname$", False, lambda: self.rng.choice(["Microsoft Corporation", "Google LLC", "Unknown"])),
@@ -134,10 +150,19 @@ class Generator:
         for pattern, case_sensitive, make in rules:
             if re.search(pattern, name if case_sensitive else n):
                 return make()
-        # Unknown string column: mostly harmless text, sometimes PII.
-        if self.rng.random() < 0.15:
-            return f.free_text()
+        # Unknown string column: a plain value. Free text (PII, injection
+        # strings) only goes into free-text columns, as in real exports.
         return self.rng.choice(["Unknown", "Default", "Enabled", "None", f.hex(6)])
+
+    def registry(self, name: str) -> str:
+        f = self.fake
+        n = name.lower()
+        if n.endswith("key"):
+            return f"HKEY_USERS\\{f.sid()}\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+        if n.endswith("valuename"):
+            return self.rng.choice(["OneDrive", "Teams", "Updater"])
+        return self.rng.choice(['"C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe" /background',
+                                f.user_path("upd.exe")])
 
     def dynamic(self) -> dict:
         f = self.fake

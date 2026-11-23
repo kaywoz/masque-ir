@@ -73,6 +73,12 @@ Tokens look like `«KIND_NNNN»` and are numbered per case. The mapping lives in
   4. `certutil` download;
   5. `a.exe` from `Temp`;
   6. domain discovery, scheduled task, SMB copy, `curl` exfiltration, SMTP.
+- **Campaign realism.**
+  - Victims are workstations.
+  - The dropped `a.exe` is one build, with the same hashes and size on every host.
+  - A storyline process is created once, so every table shows the same PID, creation time and parent for it.
+  - Columns the generator doesn't model get plain values (adapter facts, JSON IP lists). Registry fields are filled mostly in registry events.
+  - Planted PII and injection strings go only into free-text columns (subjects, descriptions, command lines, `AdditionalFields`).
 - **Repeats** differ only in the per-event fields, to test collapsing.
 - **Leak tests.** Every planted sensitive value is listed in `canaries.json`, and the CI leak tests fail if any of them reaches an outbox.
 - **Injection strings.** Planted prompt-injection strings are included unless you pass `--no-injection`.
