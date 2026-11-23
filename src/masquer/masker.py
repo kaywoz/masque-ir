@@ -22,6 +22,7 @@ BUILTIN_ALLOW = {
 }
 BLOB_RE = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{64,}={0,2}(?![A-Za-z0-9+/=])|\b[0-9a-fA-F]{129,}\b")
 CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+SCHEME_RE = re.compile(r"(?i)\b(https?|ftp)://")
 
 
 def load_list(*paths: Path) -> set[str]:
@@ -163,6 +164,9 @@ class Masker:
                       lambda m: m.group(0) if detect.SINGLE_EXT.match(m.group(0)) or self.allowed_domain(m.group(0))
                       else self.tok("ACCOUNT", m.group(0)))
         s = self._sub(s, BLOB_RE, self.blob)
+        # Defang every remaining scheme, also where the host is already a token
+        # (http://«DOMAIN_0003»/…): the URL detector never sees those.
+        s = SCHEME_RE.sub(lambda m: {"http": "hxxp", "https": "hxxps", "ftp": "fxp"}[m.group(1).lower()] + "://", s)
         return s
 
     @staticmethod

