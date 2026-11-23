@@ -61,6 +61,11 @@ masquer restore CASE CASE/inbox-1.md           # writes CASE/report-1.md
 - **outbox**: built-in prompt or `--prompt FILE`; split into parts above
   `--max-chars`. The **egress gate** runs first and blocks the outbox if any
   known original or any new detector hit is left.
+- **Injection**: rows with instruction-like text ("ignore previous
+  instructions", "reveal the original values", `</data>`, `system:` …) are
+  counted and noted in the outbox header. `--neutralise-injection` replaces
+  them with `«INJECTION_n»` tokens (restored in the report), for assistants that
+  refuse such input (seen with Defender Copilot).
 - **restore**: tokens back to originals; tokens the model altered are restored
   and marked `⚠(was …)`, unknown tokens marked `⚠ unknown token`.
 - Deny-lists (always tokenised) and allow-lists (provably not the customer's):

@@ -46,9 +46,14 @@ def cmd_outbox(a: argparse.Namespace) -> int:
     from .case import Case
 
     prompt = Path(a.prompt).read_text(encoding="utf-8") if a.prompt else None
-    paths = Case(Path(a.case)).outbox(prompt, a.max_chars, a.allow_without_ner)
+    case = Case(Path(a.case))
+    paths = case.outbox(prompt, a.max_chars, a.allow_without_ner, a.neutralise_injection)
     for p in paths:
         print(f"{p}  ({p.stat().st_size} bytes)")
+    if getattr(case, "last_flagged", 0):
+        print(f"Instruction-like text in {case.last_flagged} row(s)"
+              + (": replaced by «INJECTION_n» tokens." if a.neutralise_injection
+                 else "; noted in the header. Use --neutralise-injection if the assistant refuses."))
     print("Egress gate: passed. Paste the file(s) into the chat; save the answer as inbox-N.md in the case.")
     return 0
 
@@ -118,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
     o.add_argument("--max-chars", type=int, default=150_000, help="split into parts above this size")
     o.add_argument("--allow-without-ner", action="store_true",
                    help="write the outbox although the name-detection stage isn't installed")
+    o.add_argument("--neutralise-injection", action="store_true",
+                   help="replace instruction-like text with «INJECTION_n» tokens (restored in the report)")
     o.set_defaults(func=cmd_outbox)
 
     r = sub.add_parser("restore", help="put the original values back into a saved answer")
