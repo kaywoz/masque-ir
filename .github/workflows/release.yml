@@ -1,0 +1,38 @@
+# Builds masquer on a version tag and attaches the wheel, the sdist and
+# SHA256SUMS to a GitHub release. install.sh uses the wheel when PyPI is
+# blocked (Linux, WSL2, macOS: the wheel is pure Python).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Tag matches the package version
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          got="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -1)"
+          [ "$want" = "$got" ] || { echo "tag $GITHUB_REF_NAME != pyproject version $got"; exit 1; }
+
+      - name: Tests
+        run: uv run --frozen pytest -q
+
+      - name: Build
+        run: |
+          uv build
+          cd dist && sha256sum -- *.whl *.tar.gz > SHA256SUMS && cat SHA256SUMS
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz dist/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes
