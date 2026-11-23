@@ -8,20 +8,23 @@ back in with the original values, locally.
 
 Status: early build. See [`PLAN.md`](PLAN.md).
 
-## Check your machine
+## Install
 
-Linux, WSL2 or macOS, as your normal user (no sudo):
+Linux, WSL2 or macOS, as your normal user (no sudo). Download, check it's not
+empty, then run: the script checks the prerequisites, installs `uv` (pinned
+version from GitHub, SHA256 checked) if it's missing, then installs `masquer`
+into `~/.local/bin`.
 
 ```bash
-T=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/kaywoz/masque-ir/main/install.sh -o "$T" && [ -s "$T" ] && bash "$T" --check; rm -f "$T"
+T=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/kaywoz/masque-ir/main/install.sh -o "$T" && [ -s "$T" ] && bash "$T"; rm -f "$T"
 ```
 
-One line per check: `PASS`, `WARN`, `FAIL` or `INFO`. Any `FAIL` exits 1.
-The install itself isn't available yet.
+Only check, change nothing: add `--check`. Other modes: `--dry-run`,
+`--verify`, `--ref TAG`. Any `FAIL` stops the install.
 
-Targets: Linux (including WSL2 on Windows 11) and macOS, CPU only, no network.
-
-Licence: [MIT](LICENSE).
+Needs: github.com, release-assets.githubusercontent.com, codeload.github.com,
+pypi.org and files.pythonhosted.org. Models (later) also need huggingface.co,
+or `--models-from DIR`.
 
 ## Synthetic test data
 
