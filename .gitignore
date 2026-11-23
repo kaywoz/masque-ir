@@ -1,0 +1,17 @@
+# Real data never enters git
+cases/
+*.sqlite
+*.sqlite3
+inbox*.md
+outbox*.md
+report*.md
+# Models are downloaded and checksummed by the installer
+models/
+*.gguf
+*.onnx
+# Python
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
