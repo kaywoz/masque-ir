@@ -330,3 +330,25 @@ def test_restore_bare_and_damaged_tokens(synth_case):
     assert f"{damaged} ⚠ damaged token" in out              # never guessed
     assert "«not a token»." in out
     assert stats == {"restored_bare": 1, "restored_altered": 1, "damaged": 1}
+def test_reimport_same_file_is_skipped(tmp_path):
+    synth = tmp_path / "synth"
+    generate(synth, tables=["DeviceProcessEvents"], rows=20, seed=3)
+    f = synth / "DeviceProcessEvents.csv"
+    case = Case.create(tmp_path / "case")
+    first = case.import_files([f])
+    masked = case.root / "masked" / "DeviceProcessEvents.json"
+    n = len(json.loads(masked.read_text("utf-8")))
+    assert first and not case.last_skipped
+    # again, also through a renamed copy: same content, nothing added
+    copy = tmp_path / "copy.csv"
+    copy.write_bytes(f.read_bytes())
+    assert case.import_files([f, copy]) == {}
+    assert case.last_skipped == ["DeviceProcessEvents.csv", "copy.csv"]
+    assert len(json.loads(masked.read_text("utf-8"))) == n
+    assert len(case.imports()) == 1 and len(case.imports()[0]["sha256"]) == 64
+    # same name, other content: imported, its input copy gets a hash suffix
+    other = tmp_path / "x" / "DeviceProcessEvents.csv"
+    generate(other.parent, tables=["DeviceProcessEvents"], rows=5, seed=4)
+    case.import_files([other])
+    assert not case.last_skipped
+    assert len(list((case.root / "input").glob("DeviceProcessEvents*.csv"))) == 2

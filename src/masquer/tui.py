@@ -323,8 +323,11 @@ class CaseScreen(Screen):
         t.clear()
         for table, (rows, merged) in res.items():
             t.add_row(table, str(rows), str(merged))
-        t.display = True
-        msg.update("Imported. Next: 2 Review.")
+        t.display = bool(res)
+        skipped = getattr(self.case, "last_skipped", [])
+        msg.update(Text.assemble("Imported. Next: 2 Review." if res else "Nothing new imported.",
+                                 (f"  Skipped (already in the case): {', '.join(skipped)}" if skipped else "",
+                                  "#ffb000")))
 
     @on(Button.Pressed, "#do-outbox")
     def write_outbox(self) -> None:
