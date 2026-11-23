@@ -41,3 +41,11 @@ turns out to have been based on a misunderstanding.
 - **Root cause:** assumed a local checkout existed instead of making the command create or find it (repeat of home0ps 2026-11-23, guessed checkout path).
 - **Fix applied:** the command clones into a temporary folder when no checkout is given.
 - **Rule going forward:** commands for kaywoz's machines never assume a checkout or folder exists; they clone into `mktemp -d`, or test for the path first and say what to do if it's missing.
+
+### 2026-11-23 — chat (manual step inside a command block)
+
+- **Trigger:** command failed on the host
+- **What happened:** the walkthrough's command block had the manual step (paste into chat, save the answer) as a comment between commands. Pasted whole, `masquer restore` ran before `inbox-1.md` existed and printed a Python traceback.
+- **Root cause:** wrote one block for a flow with a human step in the middle; the CLI had no friendly error for a missing inbox.
+- **Fix applied:** `restore` defaults to the newest `inbox-N.md` and exits 2 with a clear message (and how to save the clipboard) when none exists.
+- **Rule going forward:** a command block handed to kaywoz stops at the first manual step; the commands after it go in a separate block.
