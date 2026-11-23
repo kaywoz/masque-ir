@@ -172,14 +172,14 @@ class Generator:
                 if v is None and mail and c["type"] == "string":
                     v = ""  # unmodelled email columns stay empty rather than random
                 if v is None:
-                    v = self.value(table, actions, c["name"], c["type"], ts)
+                    v = self.value(table, actions, c["name"], c["type"], ctx.ts)
                 row[c["name"]] = v
             out.append(row)
             # Repeats of the same activity, as Defender records them: new
             # Timestamp, ReportId, process id and creation time; the rest equal.
             # Most within 1 h of each other, some beyond it.
             if dup_rate and self.rng.random() < dup_rate:
-                rep_ts = ts
+                rep_ts = ctx.ts
                 for _ in range(self.rng.randint(1, 4)):
                     if len(out) >= count:
                         break
@@ -203,6 +203,8 @@ class Generator:
                         elif k == "ProcessCreationTime":
                             rep[k] = iso(rep_ts - timedelta(seconds=self.rng.randint(0, 30)))
                     out.append(rep)
+        # Storyline rows carry their own fixed times: restore time order.
+        out.sort(key=lambda r: str(r.get("Timestamp", "")))
         return out
 
 

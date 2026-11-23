@@ -66,3 +66,30 @@ def test_cli_list_and_run(tmp_path, capsys):
     assert "DeviceProcessEvents" in capsys.readouterr().out
     assert main(["synth", "--out", str(tmp_path), "--table", "AlertInfo", "--rows", "5", "--format", "json"]) == 0
     assert len(json.loads((tmp_path / "AlertInfo.json").read_text("utf-8"))) == 5
+
+
+def test_storyline_is_coherent(tmp_path):
+    import base64
+    import re
+    generate(tmp_path, tables=["DeviceProcessEvents", "DeviceNetworkEvents", "EmailEvents"], rows=80, seed=3)
+    procs = read_csv(tmp_path / "DeviceProcessEvents.csv")
+    net = read_csv(tmp_path / "DeviceNetworkEvents.csv")
+    mail = read_csv(tmp_path / "EmailEvents.csv")
+    for rows in (procs, net, mail):
+        ts = [r["Timestamp"] for r in rows]
+        assert ts == sorted(ts)
+    # -enc carries real Base64 of UTF-16LE
+    enc = [m.group(1) for r in procs if (m := re.search(r"-enc (\S+)", r["ProcessCommandLine"]))]
+    assert enc and base64.b64decode(enc[0]).decode("utf-16-le").startswith("IEX ")
+    # the dropped binary runs from Temp, unsigned
+    a = [r for r in procs if r["FileName"] == "a.exe"]
+    assert a and all(r["FolderPath"].endswith("\\AppData\\Local\\Temp\\a.exe") for r in a)
+    # each victim: winword opens the lure before powershell runs, after the phish mail
+    by_dev = {}
+    for r in procs:
+        by_dev.setdefault(r["DeviceName"], {}).setdefault(r["FileName"], r["Timestamp"])
+    victims = [d for d, f in by_dev.items() if "winword.exe" in f and "certutil.exe" in f]
+    assert victims
+    for d in victims:
+        assert by_dev[d]["winword.exe"] < by_dev[d]["certutil.exe"]
+    assert all(r["SenderIPv4"] == "" for r in mail if r["EmailDirection"] == "Intra-org")
