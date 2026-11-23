@@ -46,9 +46,12 @@ def cmd_import(a: argparse.Namespace) -> int:
         else:
             print(f"Name-detection model not installed ({model}); importing without it. "
                   "outbox will then need --allow-without-ner.", file=sys.stderr)
-    res = Case(Path(a.case)).import_files([Path(f) for f in a.files], a.gap, ner)
+    case = Case(Path(a.case))
+    res = case.import_files([Path(f) for f in a.files], a.gap, ner)
     for table, (rows, merged) in res.items():
         print(f"{table}: {rows} rows -> {merged} after collapsing")
+    for name in case.last_skipped:
+        print(f"{name}: skipped, the same content is already in the case")
     return 0
 
 

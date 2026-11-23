@@ -78,7 +78,7 @@ The tool never writes temp files for the clipboard.
 | Command | What it does |
 |---|---|
 | `masquer case new CASE` | creates the case folder, mode 700 |
-| `masquer import CASE FILE…` | tokenises, defangs and collapses CSV/JSON exports into the case |
+| `masquer import CASE FILE…` | tokenises, defangs and collapses CSV/JSON exports into the case; a file whose content is already in the case is skipped (SHA256), so importing twice doesn't double the rows |
 | `masquer outbox CASE` | runs the egress gate, then writes `CASE/outbox-N.md` |
 | `masquer restore CASE [INBOX]` | writes `CASE/report-N.md` (the default input is the newest `inbox-N.md`) |
 | `masquer synth --out DIR` | writes synthetic exports (test data only) |
