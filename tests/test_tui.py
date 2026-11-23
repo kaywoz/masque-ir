@@ -84,3 +84,23 @@ def test_flow_matches_cli(tmp_path, monkeypatch):
     leaked = {v for kind, vals in canaries.items() if kind not in ("person_name", "file_pii")
               for v in vals if v.casefold() in text}
     assert not leaked
+
+
+def test_expand_paths(tmp_path, monkeypatch):
+    from masquer.tui import expand_paths
+    monkeypatch.setenv("HOME", str(tmp_path))
+    demo = tmp_path / "Downloads" / "masquer-demo"
+    demo.mkdir(parents=True)
+    for n in ("A.csv", "B.json", "canaries.json", "notes.txt"):
+        (demo / n).write_text("x")
+    names = lambda fs: sorted(f.name for f in fs)  # noqa: E731
+    # a folder: its exports, not canaries.json or other files
+    files, missing = expand_paths("~/Downloads/masquer-demo")
+    assert names(files) == ["A.csv", "B.json"] and not missing
+    # relative to cwd, a glob, quotes, newline and ';' separators
+    files, missing = expand_paths("masquer-demo/A.csv;\n'~/Downloads/masquer-demo/*.json'", cwd=tmp_path / "Downloads")
+    assert names(files) == ["A.csv", "B.json", "canaries.json"] and not missing  # an explicit glob takes all
+    files, missing = expand_paths("nope.csv; ~/Downloads")
+    assert missing == ["nope.csv", "~/Downloads (no CSV/JSON inside)"]
+    # the Downloads list looks one folder deep
+    assert names(export_candidates([tmp_path / "Downloads"])) == ["A.csv", "B.json"]

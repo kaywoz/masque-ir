@@ -56,7 +56,7 @@ Run `masquer` with no arguments, or `masquer tui --cases DIR`. Cases live in
 | Screen | What you do |
 |---|---|
 | Cases | Pick a case (Enter) or create one. Cases older than 30 days are flagged. |
-| 1 Import | Tick exports from `~/Downloads`, or type paths separated by `;`. Choose whether to use the name model. Shows rows before and after collapsing. |
+| 1 Import | Tick exports from `~/Downloads` and its subfolders (and `--exports DIR`), or type files, folders, globs or relative paths separated by `;`. A folder means all its CSV/JSON exports. Choose whether to use the name model. Shows rows before and after collapsing. |
 | 2 Review | Choose whether to neutralise injection and whether to allow without the name model, then write the outbox. Shows the gate result and a preview of each part with tokens highlighted. |
 
 Keys: `Esc` goes back to the cases, `q` quits, `Ctrl+P` opens the command palette.
@@ -72,7 +72,7 @@ until then, use `masquer restore`.
 | `masquer outbox CASE` | runs the egress gate, then writes `CASE/outbox-N.md` |
 | `masquer restore CASE [INBOX]` | writes `CASE/report-N.md` (the default input is the newest `inbox-N.md`) |
 | `masquer synth --out DIR` | writes synthetic exports (test data only) |
-| `masquer tui [--cases DIR]` | the guided TUI (also: `masquer` with no arguments) |
+| `masquer tui [--cases DIR] [--exports DIR]` | the guided TUI (also: `masquer` with no arguments) |
 
 **import**
 - `--gap SECONDS`: collapse repeats less than this far apart (default 3600).
