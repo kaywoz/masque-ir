@@ -529,6 +529,9 @@ run_install() {
   if [ "$with_ner" = yes ]; then
     extra="[ner]"
     noindex=""  # gliner and CPU torch come from PyPI and download.pytorch.org
+    # CPU-only torch: the default Linux build pulls several GB of CUDA libraries.
+    # (pyproject's tool.uv.sources isn't applied to URL installs; this is.)
+    export UV_TORCH_BACKEND=cpu
   fi
   uvbin="$(command -v uv 2>/dev/null || echo "$BIN_DIR/uv")"
 
