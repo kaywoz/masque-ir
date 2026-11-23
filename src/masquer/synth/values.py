@@ -79,6 +79,7 @@ class Faker:
     rng: random.Random
     canaries: dict[str, set[str]] = field(default_factory=dict)
     primary: tuple[str, str, str] | None = None  # the customer this export belongs to
+    injections: bool = True  # plant prompt-injection strings in free text
 
     # --- bookkeeping ------------------------------------------------------
 
@@ -330,7 +331,7 @@ class Faker:
 
     def command_line(self) -> str:
         r = self.rng.random()
-        if r < 0.05:
+        if r < 0.05 and self.injections:
             return f'powershell.exe -c "Write-Host \'{self.pick(INJECTIONS)}\'"'
         options = [
             lambda: f"net user {self.sam()} /domain",
@@ -352,6 +353,7 @@ class Faker:
             lambda: f"Payroll file for {self.national_id()} sent to {self.email()}",
             lambda: f"Device {self.device_name()} contacted {self.url()}",
             lambda: f"Invoice paid to {self.iban()} by {self.orgnr_se()}",
-            lambda: self.pick(INJECTIONS),
         ]
+        if self.injections:
+            options.append(lambda: self.pick(INJECTIONS))
         return self.pick(options)()

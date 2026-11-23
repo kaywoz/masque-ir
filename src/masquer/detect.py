@@ -168,7 +168,9 @@ def is_tld(label: str) -> bool:
     return label in GENERIC_TLDS or (len(label) == 2 and label.isalpha())
 
 # NETBIOS\account in command lines and free text (e.g. /ru CORP\anna.l).
-DOMAIN_USER_RE = re.compile(r"(?<![\w\\.:/-])([A-Za-z][A-Za-z0-9-]{1,14})\\([A-Za-z0-9][\w.$-]{0,63})(?![\w\\])")
+# NETBIOS names are upper case in Defender data; mixed case ("Program
+# Files\\Microsoft") is a path, not DOMAIN\\account.
+DOMAIN_USER_RE = re.compile(r"(?<![\w\\.:/-])([A-Z][A-Z0-9-]{1,14})\\([A-Za-z0-9][\w.$-]{0,63})(?![\w\\])")
 SYSTEM_DOMAINS = {"authority", "builtin", "workgroup", "service", "manager", "host", "apppool",
                   "machine", "localhost"}
 # "first.last"-style names on their own are almost always accounts. Over-

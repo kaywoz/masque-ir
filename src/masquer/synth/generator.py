@@ -17,6 +17,7 @@ from importlib import resources
 from pathlib import Path
 
 from .values import CITIES, Faker
+from .world import World, email_value, make_context
 
 # Common ActionType values per table. Docs pages list only a few; these are
 # well-known values from the portal schema reference (not from the extracted
@@ -49,10 +50,13 @@ def load_schema() -> dict:
 
 
 class Generator:
-    def __init__(self, seed: int = 1, start: datetime | None = None):
+    def __init__(self, seed: int = 1, start: datetime | None = None, injections: bool = True):
         self.rng = random.Random(seed)
         self.fake = Faker(self.rng)
+        self.fake.injections = injections
+        self.world = World(self.fake, self.rng, injections=injections)
         self.start = start or datetime(2026, 11, 1, 8, 0, tzinfo=timezone.utc)
+        self.report_id = self.rng.randint(1000, 50000)
 
     # --- per-column values ------------------------------------------------
 
@@ -151,14 +155,27 @@ class Generator:
     def rows(self, table: str, spec: dict, count: int, dup_rate: float):
         actions = spec["action_types"] or COMMON_ACTIONS.get(table, [])
         cols = spec["columns"]
+        names = {c["name"] for c in cols}
+        mail = table.startswith("Email") or "NetworkMessageId" in names and "SenderFromAddress" in names
         ts = self.start
         out = []
+        iso = lambda t: t.strftime("%Y-%m-%dT%H:%M:%S.%f") + "0Z"  # noqa: E731
         while len(out) < count:
             ts += timedelta(seconds=self.rng.randint(1, 900), microseconds=self.rng.randint(0, 999999))
-            row = {c["name"]: self.value(table, actions, c["name"], c["type"], ts) for c in cols}
+            self.report_id += self.rng.randint(1, 40)
+            ctx = make_context(self.world, table, actions, ts, self.report_id)
+            row = {}
+            for c in cols:
+                v = email_value(self.world, ctx, c["name"]) if mail else None
+                if v is None:
+                    v = ctx.resolve(c["name"])
+                if v is None:
+                    v = self.value(table, actions, c["name"], c["type"], ts)
+                row[c["name"]] = v
             out.append(row)
-            # Exact repeats (only Timestamp differs) to test event collapsing:
-            # most within 1 h of each other, some beyond it.
+            # Repeats of the same activity, as Defender records them: new
+            # Timestamp, ReportId, process id and creation time; the rest equal.
+            # Most within 1 h of each other, some beyond it.
             if dup_rate and self.rng.random() < dup_rate:
                 rep_ts = ts
                 for _ in range(self.rng.randint(1, 4)):
@@ -166,9 +183,19 @@ class Generator:
                         break
                     gap = self.rng.randint(60, 3000) if self.rng.random() < 0.8 else self.rng.randint(3700, 9000)
                     rep_ts += timedelta(seconds=gap)
+                    self.report_id += self.rng.randint(1, 40)
                     rep = dict(row)
-                    if "Timestamp" in rep:
-                        rep["Timestamp"] = rep_ts.strftime("%Y-%m-%dT%H:%M:%S.%f") + "0Z"
+                    for k in rep:
+                        if k == "Timestamp":
+                            rep[k] = iso(rep_ts)
+                        elif k == "ReportId":
+                            rep[k] = self.report_id
+                        elif k in ("ProcessId", "LocalPort"):
+                            rep[k] = self.rng.randint(1000, 65000)
+                        elif k == "NetworkMessageId":
+                            rep[k] = self.fake.uuid()
+                        elif k == "ProcessCreationTime":
+                            rep[k] = iso(rep_ts - timedelta(seconds=self.rng.randint(0, 30)))
                     out.append(rep)
         return out
 
@@ -187,14 +214,15 @@ def write_csv(path: Path, rows: list[dict], encoding: str) -> None:
 
 
 def generate(out_dir: Path, tables: list[str] | None = None, rows: int = 50, seed: int = 1,
-             fmt: str = "csv", encoding: str = "utf-8", dup_rate: float = 0.1) -> dict:
+             fmt: str = "csv", encoding: str = "utf-8", dup_rate: float = 0.1,
+             injections: bool = True) -> dict:
     schema = load_schema()
     names = tables or sorted(schema["tables"])
     unknown = [t for t in names if t not in schema["tables"]]
     if unknown:
         raise SystemExit(f"unknown table(s): {', '.join(unknown)}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    gen = Generator(seed)
+    gen = Generator(seed, injections=injections)
     written = {}
     for t in names:
         data = gen.rows(t, schema["tables"][t], rows, dup_rate)
@@ -205,7 +233,20 @@ def generate(out_dir: Path, tables: list[str] | None = None, rows: int = 50, see
             p = out_dir / f"{t}.csv"
             write_csv(p, data, encoding)
         written[t] = len(data)
-    canaries = {k: sorted(v) for k, v in sorted(gen.fake.canaries.items())}
+    # Keep only canaries that were actually written (the world creates users
+    # and devices that may not appear in the chosen tables).
+    from ..triere import compile_literals
+    planted = [v for vals in gen.fake.canaries.values() for v in vals]
+    rx = compile_literals(planted)
+    seen: set[str] = set()
+    if rx:
+        for p in out_dir.glob("*.csv" if fmt == "csv" else "*.json"):
+            raw = p.read_bytes()
+            text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig")
+            text = text.replace("\\\\", "\\")  # JSON-escaped backslashes
+            seen |= {m.group(0).casefold() for m in rx.finditer(text)}
+    canaries = {k: sorted(x for x in v if x.casefold() in seen) for k, v in sorted(gen.fake.canaries.items())}
+    canaries = {k: v for k, v in canaries.items() if v}
     (out_dir / "canaries.json").write_text(
         json.dumps({"seed": seed, "tables": written, "canaries": canaries}, ensure_ascii=False, indent=1),
         encoding="utf-8")
