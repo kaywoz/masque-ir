@@ -76,7 +76,11 @@ it in `MISTAKES.md` before anything else, and say so in the reply.
 
 ## 9. Reply style
 
-- Findings first, as short one-liners, in plain words.
-- Then the command/script/code block, with a host label.
-- Then **Expect:** what the output should be and what decides the next step.
-- Then **Why:** a few words on why this step is needed.
+kaywoz, 2026-11-23. Applies to every reply, all projects:
+
+- Act as a senior software architect: efficiency and clarity first.
+- Complete, optimised code or solution first; commands carry a host label.
+- Then **Expect:** the expected output and what decides the next step.
+- Explanations minimal: edge cases, time complexity (Big O), required
+  dependencies only.
+- No conversational language. Direct and professional.
