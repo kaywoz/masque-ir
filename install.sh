@@ -2,13 +2,17 @@
 # install.sh — installer for masquer (repo masque-ir).
 #
 # Modes:
-#   --check     check prerequisites only; changes nothing (default for now)
+#   (none)      check prerequisites, then install uv (if missing) and masquer
+#   --check     check prerequisites only; changes nothing
 #   --dry-run   show what an install would do; changes nothing
-#   --verify    check an existing install (models, config folder modes)
+#   --verify    check an existing install
+#   --ref REF   install this tag or branch instead of the latest release
+#   --wheel F   install masquer from a local wheel file (no PyPI, no GitHub)
+#   --prefer-wheel  use the release wheel even when PyPI is reachable
 #   --help      this text
 #
-# The install itself is not available yet: it arrives once the masquer
-# package exists. Everything goes in the user's profile; no sudo.
+# Everything goes in the user's profile (~/.local); no sudo. Models are not
+# installed yet: they arrive with the detection stage.
 #
 # Works with bash 3.2 (macOS default) and newer.
 
@@ -26,7 +30,23 @@ WARN_RAM_MIB=11776  # "12 GB"
 MIN_DISK_GB=6
 
 # Hosts the install needs (not masquer itself, which never uses the network).
-NET_HOSTS="astral.sh github.com huggingface.co"
+NET_HOSTS="github.com release-assets.githubusercontent.com codeload.github.com pypi.org files.pythonhosted.org huggingface.co"
+
+REPO="kaywoz/masque-ir"
+BIN_DIR="$HOME/.local/bin"
+
+# uv, pinned: version and the SHA256 of each release asset (from the
+# release's own .sha256 files, checked 2026-11-23).
+UV_VERSION="0.11.32"
+uv_sha256() {
+  case "$1" in
+    x86_64-unknown-linux-gnu)  echo aab924fd522efd06f1c5f3b93a243864fc453132c94b2dc49f1371b528a4b967 ;;
+    aarch64-unknown-linux-gnu) echo 4d4fa08d95b06642e5800df6a22bd71455f23f988269e18da2847971d8c0bf31 ;;
+    x86_64-apple-darwin)       echo 77f5ca26c0de20e992a3677a174fe1121ee25c36f9b1434a863f75bf077a05eb ;;
+    aarch64-apple-darwin)      echo ed336d0ba49db8ef89b2b41fffa372ce63bd032f22a56f001c265891aec32829 ;;
+    *) return 1 ;;
+  esac
+}
 
 fails=0
 warns=0
@@ -37,7 +57,7 @@ info() { say INFO "$1" "$2"; }
 warn() { say WARN "$1" "$2"; warns=$((warns + 1)); }
 fail() { say FAIL "$1" "$2"; fails=$((fails + 1)); }
 
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # --- helpers ---------------------------------------------------------------
 
@@ -167,7 +187,7 @@ run_check() {
   if command -v uv >/dev/null 2>&1; then
     pass uv "$(uv --version 2>/dev/null || echo present)"
   else
-    warn uv "not installed: the installer will add it to your profile"
+    warn uv "not installed: the installer adds uv $UV_VERSION to $BIN_DIR"
   fi
 
   # curl (needed for the install only)
@@ -178,9 +198,9 @@ run_check() {
         pass net "$h reachable"
       else
         case "$h" in
-          astral.sh)      hint="install uv by hand, or ask IT to allow it" ;;
           huggingface.co) hint="copy the models in later with --models-from DIR" ;;
-          *)              hint="needed for the release download; ask IT to allow it" ;;
+          pypi.org|files.pythonhosted.org) hint="needed to build masquer; ask IT to allow it" ;;
+          *)              hint="needed to download uv and masquer; ask IT to allow it" ;;
         esac
         warn net "$h not reachable: $hint"
       fi
@@ -215,6 +235,8 @@ run_check() {
 }
 
 run_verify() {
+  fails=0
+  warns=0
   echo "masquer install verification"
   echo
   if [ -d "$PREFIX_DATA" ]; then
@@ -233,7 +255,11 @@ run_verify() {
     info config "$PREFIX_CONF missing: no deny-lists yet"
   fi
   if command -v masquer >/dev/null 2>&1; then
-    pass masquer "$(command -v masquer)"
+    if v="$(masquer --version 2>/dev/null)"; then
+      pass masquer "$v at $(command -v masquer)"
+    else
+      fail masquer "$(command -v masquer) doesn't run"
+    fi
   else
     fail masquer "command not found"
   fi
@@ -242,24 +268,198 @@ run_verify() {
   [ "$fails" -eq 0 ]
 }
 
+# --- install ---------------------------------------------------------------
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
+uv_target() {
+  case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64|Linux/amd64)   echo x86_64-unknown-linux-gnu ;;
+    Linux/aarch64|Linux/arm64)  echo aarch64-unknown-linux-gnu ;;
+    Darwin/x86_64)              echo x86_64-apple-darwin ;;
+    Darwin/arm64)               echo aarch64-apple-darwin ;;
+    *) return 1 ;;
+  esac
+}
+
+# Latest release tag, or empty when there is none.
+latest_tag() {
+  loc="$(curl -sS -o /dev/null -w '%{redirect_url}' -m 20 "https://github.com/$REPO/releases/latest" || true)"
+  case "$loc" in
+    */releases/tag/*) echo "${loc##*/}" ;;
+    *) echo "" ;;
+  esac
+}
+
+install_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    echo "uv: $(uv --version) already installed"
+    return 0
+  fi
+  if [ -x "$BIN_DIR/uv" ]; then
+    echo "uv: found in $BIN_DIR"
+    return 0
+  fi
+  t="$(uv_target)" || { echo "uv: no pinned build for $(uname -s)/$(uname -m)" >&2; return 1; }
+  want="$(uv_sha256 "$t")"
+  asset="uv-$t.tar.gz"
+  url="https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$asset"
+  T="$(mktemp -d)"
+  echo "uv: downloading $asset ($UV_VERSION)"
+  curl -fsSL -m 300 -o "$T/$asset" "$url" || { echo "uv: download failed: $url" >&2; rm -rf "$T"; return 1; }
+  [ -s "$T/$asset" ] || { echo "uv: download is empty" >&2; rm -rf "$T"; return 1; }
+  got="$(sha256_of "$T/$asset")"
+  if [ "$got" != "$want" ]; then
+    echo "uv: SHA256 mismatch (got $got, want $want); nothing installed" >&2
+    rm -rf "$T"
+    return 1
+  fi
+  if ! { tar -xzf "$T/$asset" -C "$T" &&
+          mkdir -p "$BIN_DIR" &&
+          install -m 755 "$T/uv-$t/uv" "$BIN_DIR/uv" &&
+          install -m 755 "$T/uv-$t/uvx" "$BIN_DIR/uvx"; }; then
+    echo "uv: unpack failed" >&2
+    rm -rf "$T"
+    return 1
+  fi
+  rm -rf "$T"
+  echo "uv: installed $("$BIN_DIR/uv" --version) to $BIN_DIR (SHA256 checked)"
+}
+
+pypi_reachable() {
+  reachable pypi.org && reachable files.pythonhosted.org
+}
+
+# Download a release's wheel and check it against the release's SHA256SUMS.
+# Prints the local wheel path. The wheel is pure Python (py3-none-any), so the
+# same file serves Linux, WSL2 and macOS.
+fetch_release_wheel() {
+  tag="$1"
+  ver="${tag#v}"
+  whl="masquer-$ver-py3-none-any.whl"
+  base="${MASQUER_RELEASE_BASE:-https://github.com/$REPO/releases/download}/$tag"
+  W="$(mktemp -d)"
+  if ! curl -fsSL -m 120 -o "$W/$whl" "$base/$whl" ||
+     ! curl -fsSL -m 60 -o "$W/SHA256SUMS" "$base/SHA256SUMS"; then
+    echo "masquer: release $tag has no $whl or SHA256SUMS" >&2
+    rm -rf "$W"
+    return 1
+  fi
+  [ -s "$W/$whl" ] || { echo "masquer: $whl is empty" >&2; rm -rf "$W"; return 1; }
+  want="$(awk -v f="$whl" '$2 == f || $2 == "*"f || $2 == "dist/"f {print $1}' "$W/SHA256SUMS")"
+  got="$(sha256_of "$W/$whl")"
+  if [ -z "$want" ] || [ "$got" != "$want" ]; then
+    echo "masquer: SHA256 mismatch for $whl (got $got, want ${want:-none}); nothing installed" >&2
+    rm -rf "$W"
+    return 1
+  fi
+  echo "$W/$whl"
+}
+
+run_install() {
+  if ! run_check; then
+    echo "Install stopped: fix the FAIL lines above first." >&2
+    return 1
+  fi
+  echo
+  install_uv || return 1
+  uvbin="$(command -v uv 2>/dev/null || echo "$BIN_DIR/uv")"
+
+  if [ -n "$wheel" ]; then
+    # Local wheel: no index, no source build.
+    [ -s "$wheel" ] || { echo "masquer: wheel $wheel not found or empty" >&2; return 1; }
+    echo "masquer: installing local wheel $(basename "$wheel")"
+    UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --no-index --python ">=3.11" "$wheel" ||
+      { echo "masquer: install from wheel failed" >&2; return 1; }
+  else
+    [ -n "$ref" ] || ref="$(latest_tag)"
+    use_wheel=no
+    if [ -n "$ref" ] && { [ "$prefer_wheel" = yes ] || ! pypi_reachable; }; then
+      case "$ref" in v[0-9]*) use_wheel=yes ;; esac
+    fi
+    if [ "$use_wheel" = yes ]; then
+      echo "masquer: installing the $ref release wheel (no PyPI needed)"
+      w="$(fetch_release_wheel "$ref")" || return 1
+      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --no-index --python ">=3.11" "$w" ||
+        { echo "masquer: install from wheel failed" >&2; rm -rf "$(dirname "$w")"; return 1; }
+      rm -rf "$(dirname "$w")"
+    else
+      if ! pypi_reachable; then
+        echo "masquer: PyPI isn't reachable and there is no release wheel for '${ref:-main}';" >&2
+        echo "  copy a release wheel here and run: bash install.sh --wheel FILE" >&2
+        return 1
+      fi
+      if [ -z "$ref" ]; then
+        ref=main
+        echo "masquer: no release yet; installing from the main branch"
+      fi
+      echo "masquer: building and installing $ref (source, needs PyPI)"
+      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --python ">=3.11" \
+        "masquer @ https://github.com/$REPO/archive/$ref.tar.gz" ||
+        { echo "masquer: install failed (PyPI and GitHub must be reachable)" >&2; return 1; }
+    fi
+  fi
+
+  mkdir -p "$PREFIX_DATA" "$PREFIX_CONF" && chmod 700 "$PREFIX_CONF" || return 1
+
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) echo
+       echo "Add $BIN_DIR to your PATH, then open a new shell:"
+       echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.$(basename "${SHELL:-bash}")rc" ;;
+  esac
+  echo
+  PATH="$BIN_DIR:$PATH" run_verify
+}
+
 run_dry_run() {
   echo "Dry run: an install would"
-  echo "  1. install uv into your profile if it's missing"
-  echo "  2. install masquer from the latest tagged release with uv"
-  echo "  3. download the pinned models into $PREFIX_DATA/models and check their SHA256"
-  echo "  4. create $PREFIX_CONF for the local deny-lists (mode 700)"
-  echo "Nothing is changed. The install itself is not available yet."
+  echo "  1. run --check and stop on any FAIL"
+  if command -v uv >/dev/null 2>&1; then
+    echo "  2. keep the installed $(uv --version)"
+  else
+    echo "  2. download uv $UV_VERSION ($(uv_target 2>/dev/null || echo unsupported)) from GitHub, check its SHA256, put it in $BIN_DIR"
+  fi
+  if [ -n "$wheel" ]; then
+    echo "  3. install masquer from the local wheel $wheel (no index) into $BIN_DIR"
+  else
+    echo "  3. install masquer (${ref:-latest release, else main}) into $BIN_DIR:"
+    echo "     the release wheel (SHA256 from SHA256SUMS) when PyPI is blocked or --prefer-wheel,"
+    echo "     otherwise a source build from GitHub (needs PyPI)"
+  fi
+  echo "  4. create $PREFIX_DATA and $PREFIX_CONF (mode 700, for the local deny-lists)"
+  echo "  5. run --verify"
+  echo "Nothing is changed."
 }
 
 # --- main ------------------------------------------------------------------
 
-mode="${1:---check}"
+mode=install
+ref=""
+wheel=""
+prefer_wheel=no
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check)   mode=check ;;
+    --verify)  mode=verify ;;
+    --dry-run) mode=dry-run ;;
+    --ref)     [ $# -ge 2 ] || { echo "install.sh: --ref needs a value" >&2; exit 2; }
+               ref="$2"; shift ;;
+    --wheel)   [ $# -ge 2 ] || { echo "install.sh: --wheel needs a file" >&2; exit 2; }
+               wheel="$2"; shift ;;
+    --prefer-wheel) prefer_wheel=yes ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "install.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
 case "$mode" in
-  --check)   if run_check; then exit 0; else exit 1; fi ;;
-  --verify)  if run_verify; then exit 0; else exit 1; fi ;;
-  --dry-run) run_dry_run ;;
-  --help|-h) usage ;;
-  *) echo "install.sh: the install itself is not available yet; use --check" >&2
-     usage >&2
-     exit 2 ;;
+  check)   if run_check; then exit 0; else exit 1; fi ;;
+  verify)  if run_verify; then exit 0; else exit 1; fi ;;
+  dry-run) run_dry_run ;;
+  install) if run_install; then exit 0; else exit 1; fi ;;
 esac
