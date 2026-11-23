@@ -36,8 +36,9 @@ def load_list(*paths: Path) -> set[str]:
 
 
 class Masker:
-    def __init__(self, store: Store, deny: set[str] = frozenset(), allow: set[str] = frozenset()):
+    def __init__(self, store: Store, deny: set[str] = frozenset(), allow: set[str] = frozenset(), ner=None):
         self.store = store
+        self.ner = ner  # NameDetector or None
         self.allow = {d.casefold() for d in (BUILTIN_ALLOW | set(allow))}
         for v in deny:
             store.token("DENY", v)
@@ -104,6 +105,11 @@ class Masker:
         if not value:
             return value
         s = CTRL_RE.sub("", value)
+        if self.ner is not None:
+            # Names the model finds (longest first), replaced before the rules run.
+            for span in sorted(set(self.ner.spans(s)), key=len, reverse=True):
+                if span in s:
+                    s = s.replace(span, self.tok("PERSON", span))
         s = self.sweep(s)
         if urls:
             s = self._sub(s, detect.URL_RE, self.url)
@@ -140,7 +146,7 @@ class Masker:
                    lambda m: m.group(0) if m.group(1).casefold() in detect.SYSTEM_DOMAINS
                    else self.tok("DOMAIN", m.group(1)) + "\\" + m.group(2), s)
         # The domain part may already be a token (swept as a known value).
-        s = re.sub(r"(«DOMAIN_\d+»)\\([A-Za-z0-9][\w.$-]{0,63})(?![\w\\])",
+        s = re.sub(r"(?<![\\/\w])(«(?:DOMAIN|PERSON|ORG|RESOURCE)_\d+»)\\([A-Za-z0-9][\w.$-]{0,63})(?![\w\\])",
                    lambda m: m.group(0) if detect.SINGLE_EXT.match(m.group(2))
                    else m.group(1) + "\\" + self.tok("ACCOUNT", m.group(2)), s)
         s = self._sub(s, detect.UNC_RE, lambda m: "\\\\" + self.tok("HOST", m.group(1)) + "\\")

@@ -36,7 +36,17 @@ def cmd_case(a: argparse.Namespace) -> int:
 def cmd_import(a: argparse.Namespace) -> int:
     from .case import Case
 
-    res = Case(Path(a.case)).import_files([Path(f) for f in a.files], a.gap)
+    ner = None
+    if not a.no_ner:
+        from .ner import NameDetector, default_model_dir
+
+        model = Path(a.ner_model) if a.ner_model else default_model_dir()
+        if a.ner_model or (model / "gliner_config.json").is_file():
+            ner = NameDetector(model, threshold=a.ner_threshold)
+        else:
+            print(f"Name-detection model not installed ({model}); importing without it. "
+                  "outbox will then need --allow-without-ner.", file=sys.stderr)
+    res = Case(Path(a.case)).import_files([Path(f) for f in a.files], a.gap, ner)
     for table, (rows, merged) in res.items():
         print(f"{table}: {rows} rows -> {merged} after collapsing")
     return 0
@@ -115,6 +125,9 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("case")
     i.add_argument("files", nargs="+", help="CSV or JSON exports")
     i.add_argument("--gap", type=int, default=3600, help="collapse repeats less than this many seconds apart")
+    i.add_argument("--ner-model", help="GLiNER model folder (default: ~/.local/share/masquer/models/gliner-pii)")
+    i.add_argument("--ner-threshold", type=float, default=0.4, help="model confidence threshold (default 0.4)")
+    i.add_argument("--no-ner", action="store_true", help="skip the name-detection stage")
     i.set_defaults(func=cmd_import)
 
     o = sub.add_parser("outbox", help="write the paste-ready outbox (egress gate runs first)")
