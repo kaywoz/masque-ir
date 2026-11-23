@@ -50,18 +50,28 @@ then run `install.sh --with-ner --models-from DIR`.
 
 ## TUI
 
-Run `masquer` with no arguments, or `masquer tui --cases DIR`. Cases live in
-`$MASQUER_CASES`, default `~/masquer-cases` (mode 700).
+Run `masquer --exports DIR`, or `masquer tui --exports DIR --cases DIR`.
+
+- **Exports.** The TUI reads exports **only** from `DIR` (or `$MASQUER_EXPORTS`). Without one, Import is disabled. Typed paths that resolve outside it are refused, including through `..`, `~` or a symlink.
+- **Cases.** They live in `$MASQUER_CASES`, default `~/masquer-cases` (mode 700).
 
 | Screen | What you do |
 |---|---|
 | Cases | Pick a case (Enter) or create one. Cases older than 30 days are flagged. |
-| 1 Import | Tick exports from `~/Downloads` and its subfolders (and `--exports DIR`), or type files, folders, globs or relative paths separated by `;`. A folder means all its CSV/JSON exports. Choose whether to use the name model. Shows rows before and after collapsing. |
-| 2 Review | Choose whether to neutralise injection and whether to allow without the name model, then write the outbox. Shows the gate result and a preview of each part with tokens highlighted. |
+| 1 Import | Tick exports in the exports folder and its subfolders, or type names, subfolders or globs relative to it, separated by `;`. A subfolder means all its CSV/JSON exports. Choose whether to use the name model. Shows rows before and after collapsing. |
+| 2 Review | Choose whether to neutralise injection and whether to allow without the name model. Pick a part size: 150k (default), 50k, 25k characters, or one part. Write the outbox, which shows the gate result. Preview each part with tokens highlighted. **Copy this part** puts it on the clipboard and moves to the next part. |
+| 3 Answer | **Paste from clipboard**, or paste into the box with the terminal. **Save as inbox and restore** writes `inbox-N.md` (mode 600) and `report-N.md`, and shows the report with `⚠` lines highlighted. **Copy report** copies the real values; the warning next to it applies. |
 
 Keys: `Esc` goes back to the cases, `q` quits, `Ctrl+P` opens the command palette.
-Copying to the clipboard and pasting the answer back come in the next release;
-until then, use `masquer restore`.
+**Clipboard tools:**
+- macOS: `pbcopy`/`pbpaste`.
+- WSL: `powershell.exe Set-/Get-Clipboard`, with the text passed as Base64 of UTF-8, so `« »` survive.
+- Linux: `wl-copy`/`wl-paste` or `xclip`.
+- None found: the buttons tell you which file to open.
+
+The tool never writes temp files for the clipboard.
+
+**Report on the clipboard.** It holds real values. On Windows, clipboard history (Win+V) and cloud clipboard sync can carry it off the machine. Turn those off on the corp laptop, or open `report-N.md` instead.
 
 ## Commands
 
@@ -72,7 +82,7 @@ until then, use `masquer restore`.
 | `masquer outbox CASE` | runs the egress gate, then writes `CASE/outbox-N.md` |
 | `masquer restore CASE [INBOX]` | writes `CASE/report-N.md` (the default input is the newest `inbox-N.md`) |
 | `masquer synth --out DIR` | writes synthetic exports (test data only) |
-| `masquer tui [--cases DIR] [--exports DIR]` | the guided TUI (also: `masquer` with no arguments) |
+| `masquer --exports DIR` | the guided TUI (same as `masquer tui --exports DIR [--cases DIR]`; `masquer` alone opens it too) |
 
 **import**
 - `--gap SECONDS`: collapse repeats less than this far apart (default 3600).
@@ -82,7 +92,7 @@ until then, use `masquer restore`.
 
 **outbox**
 - `--prompt FILE`: your own prompt. The default is a generic prompt with no case or customer context.
-- `--max-chars N`: split into parts above this size.
+- `--max-chars N`: maximum characters per part (default 150,000). A table bigger than a part is cut into chunks of whole rows, each with the column row repeated and marked `rows a-b of n`.
 - `--allow-without-ner`: write the outbox even though the name model isn't installed. Check the file by hand afterwards.
 - `--neutralise-injection`: replace instruction-like rows with `«INJECTION_n»` tokens, which are restored in the report. Use it with assistants that refuse such input (seen with Defender Copilot).
 

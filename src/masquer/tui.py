@@ -16,12 +16,17 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import (Button, DataTable, Footer, Header, Input, Label, RichLog, Select, SelectionList,
-                             Static, Switch, TabbedContent, TabPane)
+                             Static, Switch, TabbedContent, TabPane, TextArea)
 
-from .case import Case
+from . import clip
+from .case import Case, write_private
 from .store import TOKEN_RE
 
 RETENTION_DAYS = 30
+PART_SIZES = [("150,000 chars (default)", 150_000), ("50,000 chars", 50_000), ("25,000 chars", 25_000),
+              ("one part, no split", 10**12)]
+REPORT_WARNING = ("The report holds the real values. Clipboard history and cloud clipboard sync "
+                  "(Windows: Win+V, Sync across devices) can carry it off this machine.")
 EXPORT_GLOBS = ("*.csv", "*.json")
 
 
@@ -51,7 +56,9 @@ NOT_EXPORTS = {"canaries.json", "imports.json"}  # synth's leak list, a case's i
 
 def _exports_in(d: Path, depth: int) -> set[Path]:
     globs = EXPORT_GLOBS + tuple(f"*/{g}" for g in EXPORT_GLOBS) if depth > 1 else EXPORT_GLOBS
-    return {f.resolve() for g in globs for f in d.glob(g) if f.is_file() and f.name not in NOT_EXPORTS}
+    root = d.resolve()
+    return {r for g in globs for f in d.glob(g)
+            if f.is_file() and f.name not in NOT_EXPORTS and (r := f.resolve()).is_relative_to(root)}
 
 
 def export_candidates(dirs: list[Path], limit: int = 200, depth: int = 2) -> list[Path]:
@@ -60,32 +67,39 @@ def export_candidates(dirs: list[Path], limit: int = 200, depth: int = 2) -> lis
     return sorted(found, key=lambda f: f.stat().st_mtime, reverse=True)[:limit]
 
 
-def expand_paths(text: str, cwd: Path | None = None) -> tuple[list[Path], list[str]]:
-    """Paths typed by the user: separated by ';' or newlines; '~', relative
-    (to cwd), globs, and folders (their CSV/JSON exports). Returns (files, not found)."""
-    cwd = cwd or Path.cwd()
-    files, missing = [], []
+def expand_paths(text: str, base: Path) -> tuple[list[Path], list[str]]:
+    """Paths typed by the user, confined to the exports folder `base`.
+
+    Separated by ';' or newlines; relative to `base`, or absolute/'~' inside it;
+    globs; folders (their CSV/JSON exports). Anything resolving outside `base`
+    (symlinks included) is refused. Returns (files, problems)."""
+    root = base.resolve()
+    inside = lambda f: f.resolve().is_relative_to(root)  # noqa: E731
+    files, problems = [], []
     for raw in re.split(r"[;\n]", text):
         item = raw.strip().strip("'\"")
         if not item:
             continue
         p = Path(item).expanduser()
-        p = p if p.is_absolute() else cwd / p
+        p = p if p.is_absolute() else root / p
         if any(c in item for c in "*?["):
-            hits = sorted(f for f in Path(p.anchor).glob(str(p.relative_to(p.anchor))) if f.is_file())
-            files += hits
-            if not hits:
-                missing.append(item)
+            hits = sorted(f.resolve() for f in Path(p.anchor).glob(str(p.relative_to(p.anchor))) if f.is_file())
+            kept = [f for f in hits if inside(f)]
+            files += kept
+            if not kept:
+                problems.append(f"{item} (no match inside the exports folder)" if hits else item)
+        elif not inside(p):
+            problems.append(f"{item} (outside the exports folder)")
         elif p.is_dir():
-            hits = sorted(_exports_in(p, 1))
+            hits = sorted(f for f in _exports_in(p, 1) if inside(f))
             files += hits
             if not hits:
-                missing.append(f"{item} (no CSV/JSON inside)")
+                problems.append(f"{item} (no CSV/JSON inside)")
         elif p.is_file():
             files.append(p.resolve())
         else:
-            missing.append(item)
-    return files, missing
+            problems.append(item)
+    return files, problems
 
 
 def short(p: Path) -> str:
@@ -101,6 +115,18 @@ def highlight_tokens(text: str) -> Text:
     t.highlight_regex(TOKEN_RE.pattern, "bold #1fb6ff")
     t.highlight_regex(r"\bhxxps?://|\[\.\]", "#ff8fa3")
     return t
+
+
+def highlight_report(text: str) -> Text:
+    t = Text(text, no_wrap=True, overflow="ignore")
+    t.highlight_regex(r"⚠[^\n]*", "bold #ffb000")
+    return t
+
+
+def latest_round(root: Path) -> int:
+    """Number N of the newest outbox-N*.md, 0 if none."""
+    n = [int(m.group(1)) for p in root.glob("outbox-*.md") if (m := re.match(r"outbox-(\d+)", p.name))]
+    return max(n, default=0)
 
 
 def name_model():
@@ -193,9 +219,9 @@ class CaseScreen(Screen):
         yield Label(f"Case {self.case.root.name}  ·  {self.case.root}", id="case-title")
         with TabbedContent(initial="import"):
             with TabPane("1 Import", id="import"):
-                yield Label("Pick exports (newest first), or type files, folders or globs separated by ';'.")
+                yield Label("", id="exports-title")
                 yield SelectionList[str](id="files")
-                yield Input(placeholder="~/Downloads/masquer-demo   or   ~/exports/*.csv; ./EmailEvents.csv", id="paths")
+                yield Input(placeholder="relative to the exports folder: DeviceProcessEvents.csv; case-x/*.csv; subfolder", id="paths")
                 with Horizontal(classes="row"):
                     yield Label("Name model", classes="lbl")
                     yield Switch(value=ner_installed(), disabled=not ner_installed(), id="use-ner")
@@ -210,14 +236,32 @@ class CaseScreen(Screen):
                     yield Switch(value=False, id="neutralise")
                     yield Label("Allow without name model", classes="lbl")
                     yield Switch(value=False, id="allow-no-ner")
+                    yield Label("Part size", classes="lbl")
+                    yield Select[int](PART_SIZES, value=150_000, allow_blank=False, id="part-size")
                 with Horizontal(classes="row"):
                     yield Button("Write outbox (egress gate runs first)", id="do-outbox", variant="primary")
                     yield Select[str]([], prompt="part", id="part", allow_blank=True)
+                    yield Button("Copy this part", id="copy-part", disabled=True)
                 yield Static("", id="outbox-msg")
                 yield RichLog(id="preview", wrap=False, markup=False, highlight=False, auto_scroll=False)
+            with TabPane("3 Answer", id="answer"):
+                yield Label("Paste the chat's answer below (terminal paste), or read it from the clipboard.")
+                with Horizontal(classes="row"):
+                    yield Button("Paste from clipboard", id="paste-answer")
+                    yield Button("Save as inbox and restore", id="do-restore", variant="primary")
+                yield TextArea(id="answer-text", soft_wrap=True)
+                yield Static("", id="restore-msg")
+                yield RichLog(id="report", wrap=False, markup=False, highlight=False, auto_scroll=False)
+                with Horizontal(classes="row"):
+                    yield Button("Copy report", id="copy-report", disabled=True, variant="warning")
+                    yield Label(REPORT_WARNING, id="report-warning", classes="hint")
         yield Footer()
 
     def on_mount(self) -> None:
+        if self.app.clip_backend is None:
+            for b in ("#copy-part", "#paste-answer", "#copy-report"):
+                self.query_one(b, Button).tooltip = "no clipboard tool found: use the file path shown"
+        self.query_one("#report").display = False
         self.refresh_files()
         t = self.query_one("#import-result", DataTable)
         t.add_columns("Table", "Rows", "After collapsing")
@@ -225,11 +269,21 @@ class CaseScreen(Screen):
         self.show_imported()
 
     def refresh_files(self) -> None:
-        dirs = [Path.home() / "Downloads", self.app.exports_dir] if self.app.exports_dir else [Path.home() / "Downloads"]
+        base = self.app.exports_dir
+        title = self.query_one("#exports-title", Label)
         sl = self.query_one("#files", SelectionList)
         sl.clear_options()
-        for f in export_candidates(dirs):
-            sl.add_option((f"{f.name}  ({short(f.parent)})", str(f)))
+        if base is None or not base.is_dir():
+            title.update(Text("No exports folder. Start masquer with --exports DIR (or set MASQUER_EXPORTS); "
+                              "the TUI reads exports only from there."
+                              + (f" Not a folder: {base}" if base else ""), style="bold #ffb000"))
+            for w in ("#paths", "#do-import"):
+                self.query_one(w).disabled = True
+            return
+        title.update(f"Exports in {short(base)} (and its subfolders), newest first. "
+                     "Tick them, or type names, subfolders or globs relative to it, separated by ';'.")
+        for f in export_candidates([base]):
+            sl.add_option((str(f.relative_to(base.resolve())), str(f)))
 
     def show_imported(self) -> None:
         done = self.case.imports()
@@ -240,7 +294,7 @@ class CaseScreen(Screen):
     @on(Button.Pressed, "#do-import")
     def start_import(self) -> None:
         picked = [Path(p) for p in self.query_one("#files", SelectionList).selected]
-        typed, missing = expand_paths(self.query_one("#paths", Input).value)
+        typed, missing = expand_paths(self.query_one("#paths", Input).value, self.app.exports_dir)
         files = sorted(dict.fromkeys(f.resolve() for f in picked + typed), key=lambda f: (f.name, str(f)))  # stable tokens
         msg = self.query_one("#import-msg", Static)
         if not files or missing:
@@ -276,7 +330,8 @@ class CaseScreen(Screen):
     def write_outbox(self) -> None:
         msg = self.query_one("#outbox-msg", Static)
         try:
-            self.parts = self.case.outbox(None, 150_000, self.query_one("#allow-no-ner", Switch).value,
+            self.parts = self.case.outbox(None, self.query_one("#part-size", Select).value,
+                                          self.query_one("#allow-no-ner", Switch).value,
                                           self.query_one("#neutralise", Switch).value)
         except SystemExit as e:
             msg.update(Text(str(e), style="bold red"))
@@ -288,6 +343,7 @@ class CaseScreen(Screen):
         sel = self.query_one("#part", Select)
         sel.set_options([(p.name, str(p)) for p in self.parts])
         sel.value = str(self.parts[0])
+        self.query_one("#copy-part", Button).disabled = False
 
     @on(Select.Changed, "#part")
     def show_part(self, ev: Select.Changed) -> None:
@@ -296,6 +352,92 @@ class CaseScreen(Screen):
             log.clear()
             log.write(highlight_tokens(Path(ev.value).read_text("utf-8")), expand=True, shrink=False)
             log.scroll_home(animate=False)
+
+    # clipboard and answer ---------------------------------------------------------
+
+    def _clip(self, msg: Static, fallback: str) -> clip.Backend | None:
+        if self.app.clip_backend is None:
+            msg.update(Text(f"No clipboard tool found (pbcopy, powershell.exe in WSL, wl-copy, xclip). {fallback}",
+                            style="bold #ffb000"))
+        return self.app.clip_backend
+
+    @on(Button.Pressed, "#copy-part")
+    def copy_part(self) -> None:
+        sel = self.query_one("#part", Select)
+        msg = self.query_one("#outbox-msg", Static)
+        if not isinstance(sel.value, str):
+            return
+        path = Path(sel.value)
+        if (cb := self._clip(msg, f"Open {path}")) is None:
+            return
+        text = path.read_text("utf-8")
+        try:
+            cb.copy(text)
+        except clip.ClipboardError as e:
+            msg.update(Text(f"Copy failed: {e}. Open {path}", style="bold red"))
+            return
+        i = [str(p) for p in self.parts].index(sel.value)
+        more = i + 1 < len(self.parts)
+        msg.update(Text.assemble((f"Copied {path.name} ", "bold green"), f"({len(text):,} chars). Paste it into the chat",
+                                 "; then copy the next part." if more else "; then save the answer in 3 Answer."))
+        if more:
+            sel.value = str(self.parts[i + 1])
+
+    @on(Button.Pressed, "#paste-answer")
+    def paste_answer(self) -> None:
+        msg = self.query_one("#restore-msg", Static)
+        if (cb := self._clip(msg, "Paste into the box with the terminal's paste instead.")) is None:
+            return
+        try:
+            text = cb.paste()
+        except clip.ClipboardError as e:
+            msg.update(Text(f"Paste failed: {e}", style="bold red"))
+            return
+        self.query_one("#answer-text", TextArea).text = text
+        msg.update(f"Read {len(text):,} chars from the clipboard. Check it, then save and restore.")
+
+    @on(Button.Pressed, "#do-restore")
+    def save_and_restore(self) -> None:
+        msg = self.query_one("#restore-msg", Static)
+        text = self.query_one("#answer-text", TextArea).text
+        n = latest_round(self.case.root)
+        if not text.strip():
+            msg.update("The answer box is empty.")
+            return
+        if not n:
+            msg.update("No outbox in this case yet: write one in 2 Review first.")
+            return
+        inbox = self.case.root / f"inbox-{n}.md"
+        write_private(inbox, text if text.endswith("\n") else text + "\n")
+        try:
+            dest, stats = self.case.restore(inbox)
+        except (SystemExit, Exception) as e:  # noqa: BLE001 (shown to the user)
+            msg.update(Text(f"Restore failed: {e}", style="bold red"))
+            return
+        self.report_path = dest
+        warn = stats.get("unknown", 0) + stats.get("restored_altered", 0)
+        msg.update(Text.assemble((f"{inbox.name} -> {dest.name}: ", "bold green"),
+                                 ", ".join(f"{k} {v}" for k, v in sorted(stats.items())) or "no tokens",
+                                 (f"  ·  check the {warn} ⚠ line(s)" if warn else "", "bold #ffb000")))
+        log = self.query_one("#report", RichLog)
+        log.clear()
+        log.write(highlight_report(dest.read_text("utf-8")), expand=True, shrink=False)
+        log.scroll_home(animate=False)
+        log.display = True
+        self.query_one("#copy-report", Button).disabled = False
+
+    @on(Button.Pressed, "#copy-report")
+    def copy_report(self) -> None:
+        msg = self.query_one("#restore-msg", Static)
+        path = getattr(self, "report_path", None)
+        if path is None or (cb := self._clip(msg, f"Open {path}")) is None:
+            return
+        try:
+            cb.copy(path.read_text("utf-8"))
+        except clip.ClipboardError as e:
+            msg.update(Text(f"Copy failed: {e}. Open {path}", style="bold red"))
+            return
+        msg.update(Text.assemble((f"Copied {path.name}. ", "bold green"), (REPORT_WARNING, "#ffb000")))
 
 
 class MasquerApp(App):
@@ -313,14 +455,23 @@ class MasquerApp(App):
     #files { height: 10; }
     #import-result { height: auto; max-height: 12; margin-top: 1; }
     #part { width: 30; }
-    #preview { height: 1fr; border: round #1fb6ff; }
-    #outbox-msg, #import-msg, #cases-msg { margin-top: 1; }
+    #part-size { width: 32; }
+    #preview, #report { height: 1fr; border: round #1fb6ff; }
+    #report { border: round #ffb000; }
+    #answer-text { height: 12; }
+    #report-warning { width: 1fr; }
+    #outbox-msg, #import-msg, #cases-msg, #restore-msg { margin-top: 1; }
     """
 
-    def __init__(self, cases_dir: Path | None = None, exports_dir: Path | None = None):
+    def __init__(self, cases_dir: Path | None = None, exports_dir: Path | None = None,
+                 clipboard: clip.Backend | None | bool = True):
         super().__init__()
         self.cases_dir = Path(cases_dir) if cases_dir else default_cases_dir()
-        self.exports_dir = exports_dir
+        env = os.environ.get("MASQUER_EXPORTS")
+        self.exports_dir = (Path(exports_dir) if exports_dir else Path(env) if env else None)
+        self.exports_dir = self.exports_dir.expanduser().resolve() if self.exports_dir else None
+        # True: detect; None/False: no clipboard; a Backend: use it (tests).
+        self.clip_backend = clip.detect() if clipboard is True else (clipboard or None)
 
     def on_mount(self) -> None:
         self.push_screen(CasesScreen())

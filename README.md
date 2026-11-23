@@ -43,9 +43,12 @@ machines and proxies with TLS inspection: [docs/usage.md](docs/usage.md#install)
 
 ## Run
 
-Run `masquer` with no arguments to open the guided TUI: pick a case, import
-the exports, write the outbox (the egress gate runs first) and preview it with
-the tokens highlighted.
+Run `masquer --exports DIR` to open the guided TUI. It reads exports only
+from `DIR`. In the TUI you:
+1. pick a case;
+2. import the exports;
+3. write the outbox (the egress gate runs first) and copy it to the clipboard part by part;
+4. paste the chat's answer back and get the report with the real values.
 
 <p align="center"><img src="docs/tui-review.png" alt="masquer TUI review tab: egress gate passed, outbox preview with tokens highlighted" width="720"></p>
 
