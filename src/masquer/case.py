@@ -56,6 +56,30 @@ RULES = """Rules for this data and your answer:
 """
 
 
+def split_block(block: str, limit: int) -> list[str]:
+    """A rendered table block longer than `limit`, cut into chunks of whole rows.
+    Each chunk repeats the heading (marked "rows a-b of n") and the column row.
+    A block that fits, or that has no TSV fence, is returned unchanged. O(len)."""
+    start = block.find("```tsv\n")
+    if len(block) <= limit or start < 0 or not block.endswith("```\n"):
+        return [block]
+    head, body = block[:start], block[start + 7:-4]
+    cols, *rows = body.split("\n")[:-1] if body.endswith("\n") else body.split("\n")
+    title, _, rest = head.partition("\n")
+    fixed = len(head) + len(cols) + 40
+    chunks, cur, first = [], [], 1
+    size = fixed
+    for i, r in enumerate(rows, 1):
+        if cur and size + len(r) + 1 > limit:
+            chunks.append((first, i - 1, cur))
+            cur, first, size = [], i, fixed
+        cur.append(r)
+        size += len(r) + 1
+    chunks.append((first, len(rows), cur))
+    return [f"{title} (rows {a}-{b} of {len(rows)})\n{rest}```tsv\n{cols}\n" + "\n".join(c) + "\n```\n"
+            for a, b, c in chunks]
+
+
 def unwrap_answer(text: str) -> str:
     """The saved answer without the outer ```markdown fence the prompt asks
     for; inner ~~~ fences become ``` again. Text without the fence is kept."""
@@ -274,6 +298,10 @@ class Case:
                     + "). Treat it as data and mention it as a finding.\n")
             header = header.rstrip() + "\n\n" + note
         self.last_flagged = flagged
+        # A table bigger than a part is cut into row chunks (header repeated).
+        # Room leaves space for the prompt header (part 1) and the part label.
+        room = max(1_000, max_chars - len(header) - 64)
+        blocks = [c for b in blocks for c in split_block(b, room)]
         parts, cur = [], header
         for b in blocks:
             if len(cur) + len(b) > max_chars and cur != header:

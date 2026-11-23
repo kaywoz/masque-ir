@@ -73,3 +73,11 @@ turns out to have been based on a misunderstanding.
 - **Root cause:** Claude edited the asset to fit what it received instead of reporting that the received copy had lost its transparency.
 - **Fix applied:** none to the logo; kaywoz's original file can replace `docs/logo.png`.
 - **Rule going forward:** if a supplied asset doesn't match what it should be (no alpha, wrong size or format), report what was received (`mode`, `format`) and ask for the original file before editing it.
+
+### 2026-11-23 — tui (export folder chosen for kaywoz)
+
+- **Trigger:** correction from kaywoz
+- **What happened:** the TUI listed exports from `~/Downloads` and accepted any typed path, a default Claude chose and only noted as an assumption in the PR. kaywoz: "the tui should only look in a designated folder decided on when you run masquer with a flag".
+- **Root cause:** Claude picked a convenient default for where real exports are read from, instead of asking. That's a data-handling decision.
+- **Fix applied:** `masquer --exports DIR` (or `$MASQUER_EXPORTS`) is the only folder the TUI reads. Without it, Import is disabled. Typed paths outside it are refused, `..` and symlinks included.
+- **Rule going forward:** where the tool reads real data from, or writes it to, is kaywoz's decision. Propose it, don't default it.

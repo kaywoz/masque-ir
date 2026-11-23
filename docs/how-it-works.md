@@ -43,7 +43,7 @@ Tokens look like `«KIND_NNNN»` and are numbered per case. The mapping lives in
 
 ## outbox and the egress gate
 
-- The outbox is rendered as the prompt, then the rules, then one tab-separated block per table, split above `--max-chars`.
+- The outbox is rendered as the prompt, then the rules, then one tab-separated block per table. Parts stay within `--max-chars`. A table bigger than a part is cut by `split_block()` into whole-row chunks, each repeating the heading (`rows a-b of n`) and the column row. Every row appears exactly once.
 - **Injection.** Rows with instruction-like text ("ignore previous instructions", `</data>`, `system:` …) are counted and noted in the header. `--neutralise-injection` replaces them with tokens.
 - **Egress gate.** This is the last step before the file is written. It blocks the outbox if:
   - any original value from the store is still in the text; or

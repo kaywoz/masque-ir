@@ -109,8 +109,8 @@ def cmd_tui(a: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if not argv:
-        argv = ["tui"]  # no arguments: the guided TUI
+    if not argv or argv[0].split("=")[0] in ("--exports", "--cases"):
+        argv = ["tui", *argv]  # no subcommand: the guided TUI
     p = argparse.ArgumentParser(prog="masquer", description=__doc__)
     p.add_argument("--version", action="version", version=f"masquer {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -161,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
 
     t = sub.add_parser("tui", help="guided full-screen flow (also: masquer with no arguments)")
     t.add_argument("--cases", help="folder holding the cases (default: $MASQUER_CASES or ~/masquer-cases)")
-    t.add_argument("--exports", help="extra folder to list exports from (besides ~/Downloads)")
+    t.add_argument("--exports", help="the only folder the TUI reads exports from (default: $MASQUER_EXPORTS)")
     t.set_defaults(func=cmd_tui)
 
     a = p.parse_args(argv)
