@@ -55,7 +55,9 @@ masquer restore CASE CASE/inbox-1.md           # writes CASE/report-1.md
   national IDs with checksums, IBANs, phone numbers, MACs, user paths, UNC
   hosts, domains), then swept for every value already known; URLs are
   defanged, long blobs replaced by their hash; exact repeats less than 1 h
-  apart are collapsed (`FirstSeen`, `LastSeen`, `Count`).
+  apart are collapsed (`FirstSeen`, `LastSeen`, `Count`); per-event fields
+  (`ReportId`, process id and creation time, `NetworkMessageId`, `LocalPort`)
+  are ignored for that, and the collapsed row keeps the first event's values.
 - **outbox**: built-in prompt or `--prompt FILE`; split into parts above
   `--max-chars`. The **egress gate** runs first and blocks the outbox if any
   known original or any new detector hit is left.
@@ -76,8 +78,13 @@ BOM, CRLF, like a portal export) or JSON. Values are fake and use reserved
 ranges (`.example` domains, documentation IPs, fiction phone numbers);
 national IDs, IBANs and organisation numbers carry valid checksums so the
 detectors can be tested. Every planted sensitive value is listed in
-`canaries.json` for leak tests. Exact repeats (only the timestamp differs)
-test event collapsing.
+`canaries.json` for leak tests. A small consistent world sits behind the
+rows: devices, users and binaries keep their names, IDs, SIDs, signers,
+paths and sizes across rows and tables; process trees are in time order; one
+phishing-to-exfiltration storyline is mixed into benign activity. Repeats of
+the same activity differ only in the per-event fields Defender sets
+(Timestamp, ReportId, process id and creation time, NetworkMessageId), to test
+collapsing. `--no-injection` leaves out the planted prompt-injection strings.
 
 ```bash
 # any host with uv (shell), from a checkout

@@ -19,7 +19,7 @@ the original values, locally.
 - Real exports may be processed on both the corp laptop (WSL) and the Mac mini (FileVault on).
 - Licence: MIT.
 - Public repository; one-line installer (`install.sh --check`, then install).
-- Paste size: collapse exact-duplicate events (all fields equal except timestamp) while repeats are under 1 h apart, as `first -> last, count`; then split with `--parts N`.
+- Paste size: collapse repeats while under 1 h apart, as `first -> last, count`; then split into parts. Repeats are rows equal except the per-event fields Defender sets (Timestamp, ReportId, process id/creation time, NetworkMessageId, LocalPort) — kaywoz 2026-11-23, "make it like real Defender data" (was: equal except Timestamp).
 - Prompt: `--prompt FILE` for a custom prompt; otherwise a built-in generic prompt with no case or customer context (triage summary, timeline, ATT&CK mapping, IOCs, follow-up KQL; KQL comes back runnable after restore).
 - Follow-up rounds: `masquer ask` -> `outbox-N.md` / `inbox-N.md`, same case tokens.
 - Claude Project: repo ships `project-instructions.md`, pasted once by kaywoz.

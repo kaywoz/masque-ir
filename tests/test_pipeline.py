@@ -228,3 +228,29 @@ def test_account_after_known_domain(tmp_path):
     m.refresh_sweep()
     out = m.text(r"schtasks /ru NORDVIND\aino.dubois /tr x")
     assert "aino" not in out and out.count("«") == 2, out
+
+
+def test_collapse_ignores_per_event_fields():
+    base = {"DeviceName": "«HOST_0001»", "ActionType": "ProcessCreated", "ProcessCommandLine": "x"}
+    rows = [dict(base, Timestamp="2026-11-01T08:00:00Z", ReportId=1, ProcessId=11),
+            dict(base, Timestamp="2026-11-01T08:20:00Z", ReportId=2, ProcessId=12),
+            dict(base, Timestamp="2026-11-01T08:25:00Z", ReportId=3, ProcessId=13, ProcessCommandLine="y")]
+    out = collapse(rows, 3600)
+    assert sorted(r["Count"] for r in out) == [1, 2]
+    assert next(r for r in out if r["Count"] == 2)["ReportId"] == 1
+
+
+def test_vendor_paths_untouched(tmp_path):
+    m = masker(tmp_path)
+    for p in [r"C:\Program Files\Microsoft Office\root\Office16\winword.exe",
+              r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+              r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"]:
+        assert m.text(p) == p
+
+
+def test_domain_before_known_account(tmp_path):
+    m = masker(tmp_path)
+    m.value("AccountName", "nikos.akesson")
+    m.refresh_sweep()
+    out = m.text(r"schtasks /ru TANNENHOF\nikos.akesson")
+    assert "TANNENHOF" not in out and "nikos" not in out, out

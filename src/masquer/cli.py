@@ -18,7 +18,8 @@ def cmd_synth(a: argparse.Namespace) -> int:
     if not a.out:
         print("masquer synth: --out DIR is required", file=sys.stderr)
         return 2
-    res = generate(Path(a.out), a.table or None, a.rows, a.seed, a.format, a.encoding, a.dup_rate)
+    res = generate(Path(a.out), a.table or None, a.rows, a.seed, a.format, a.encoding, a.dup_rate,
+                   injections=not a.no_injection)
     print(f"{len(res['tables'])} tables, {sum(res['tables'].values())} rows, "
           f"{res['canaries']} canaries -> {a.out}")
     return 0
@@ -95,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="CSV encoding, both with BOM (default utf-8)")
     s.add_argument("--dup-rate", type=float, default=0.1,
                    help="share of rows repeated with only the timestamp changed (default 0.1)")
+    s.add_argument("--no-injection", action="store_true",
+                   help="leave out the planted prompt-injection strings")
     s.add_argument("--list", action="store_true", help="list the known tables and exit")
     s.set_defaults(func=cmd_synth)
 

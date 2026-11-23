@@ -135,6 +135,10 @@ class Masker:
                 return m.group(0)
             return self.tok("DOMAIN", dom) + "\\" + self.tok("ACCOUNT", user)
         s = self._sub(s, detect.DOMAIN_USER_RE, domain_user)
+        # The account part may already be a token (swept as a known value).
+        s = re.sub(r"(?<![\w\\.:/-])([A-Z][A-Z0-9-]{1,14})\\(«(?:ACCOUNT|PERSON|UPN)_\d+»)",
+                   lambda m: m.group(0) if m.group(1).casefold() in detect.SYSTEM_DOMAINS
+                   else self.tok("DOMAIN", m.group(1)) + "\\" + m.group(2), s)
         # The domain part may already be a token (swept as a known value).
         s = re.sub(r"(«DOMAIN_\d+»)\\([A-Za-z0-9][\w.$-]{0,63})(?![\w\\])",
                    lambda m: m.group(0) if detect.SINGLE_EXT.match(m.group(2))
@@ -194,9 +198,15 @@ class Masker:
         return {k: self.value(k, v) for k, v in row.items()}
 
 
+# Fields Defender sets per event: a repeat of the same activity differs in
+# these and nothing else. The collapsed row keeps the first event's values.
+EVENT_FIELDS = {"Timestamp", "ReportId", "ProcessId", "ProcessCreationTime", "LocalPort",
+                "NetworkMessageId", "LogonId", "EventId"}
+
+
 def collapse(rows: list[dict], gap_seconds: int = 3600) -> list[dict]:
-    """Merge rows identical except Timestamp while repeats are < gap apart.
-    Adds FirstSeen, LastSeen, Count. O(n log n) for the sort."""
+    """Merge rows identical except the per-event fields (EVENT_FIELDS) while
+    repeats are < gap apart. Adds FirstSeen, LastSeen, Count. O(n log n)."""
     if not rows or "Timestamp" not in rows[0]:
         return [dict(r, Count=1) for r in rows]
     from datetime import datetime
@@ -211,7 +221,7 @@ def collapse(rows: list[dict], gap_seconds: int = 3600) -> list[dict]:
 
     keyed = []
     for r in rows:
-        key = json.dumps({k: v for k, v in r.items() if k != "Timestamp"}, sort_keys=True, ensure_ascii=False)
+        key = json.dumps({k: v for k, v in r.items() if k not in EVENT_FIELDS}, sort_keys=True, ensure_ascii=False)
         keyed.append((key, ts(r), r))
     keyed.sort(key=lambda x: (x[0], x[1] is None, x[1] or 0))
     out: list[dict] = []

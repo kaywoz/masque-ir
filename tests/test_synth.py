@@ -56,7 +56,8 @@ def test_canaries_appear_in_data(tmp_path):
 def test_exact_duplicates_present(tmp_path):
     generate(tmp_path, tables=["DeviceNetworkEvents"], rows=200, dup_rate=0.3)
     rows = read_csv(tmp_path / "DeviceNetworkEvents.csv")
-    keys = [tuple(v for k, v in r.items() if k != "Timestamp") for r in rows]
+    from masquer.masker import EVENT_FIELDS
+    keys = [tuple(v for k, v in r.items() if k not in EVENT_FIELDS) for r in rows]
     assert len(set(keys)) < len(keys)
 
 
