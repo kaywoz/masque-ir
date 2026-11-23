@@ -25,3 +25,11 @@ turns out to have been based on a misunderstanding.
 ---
 
 ## New entries
+
+### 2026-11-23 — install (RAM check rounded down)
+
+- **Trigger:** wrong result on a host
+- **What happened:** `install.sh --check` on WSL2 reported `FAIL ram 7 GB total; need 8 GB`. The RAM figure was `MemTotal` floored to whole GiB, and the kernel reserves memory, so an 8 GB machine or WSL VM reports about 7.6-7.9 GiB and always floored to 7.
+- **Root cause:** compared a floored, reserved-memory figure against a nominal size without checking what `MemTotal` reports on a machine of that size.
+- **Fix applied:** RAM compared in MiB with 0.5 GiB slack (fail under 7.5 GiB, warn under 11.5 GiB), shown with one decimal.
+- **Rule going forward:** size checks against nominal hardware sizes allow for kernel-reserved memory and never floor before comparing.
