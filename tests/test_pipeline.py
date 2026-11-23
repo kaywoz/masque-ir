@@ -254,3 +254,16 @@ def test_domain_before_known_account(tmp_path):
     m.refresh_sweep()
     out = m.text(r"schtasks /ru TANNENHOF\nikos.akesson")
     assert "TANNENHOF" not in out and "nikos" not in out, out
+
+
+def test_unwrap_answer():
+    from masquer.case import unwrap_answer
+    wrapped = "```markdown\n# Triage\n~~~kql\nDeviceEvents | take 1\n~~~\n```\n"
+    assert unwrap_answer(wrapped) == "# Triage\n```kql\nDeviceEvents | take 1\n```"
+    assert unwrap_answer("plain answer") == "plain answer"
+
+
+def test_rules_in_custom_prompt(synth_case, tmp_path):
+    case, _, _ = synth_case
+    text = case.render("My own question.")[0]
+    assert "My own question." in text and "```markdown" in text and "Keep every «…» token" in text
