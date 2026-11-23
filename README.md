@@ -22,3 +22,21 @@ The install itself isn't available yet.
 Targets: Linux (including WSL2 on Windows 11) and macOS, CPU only, no network.
 
 Licence: [MIT](LICENSE).
+
+## Synthetic test data
+
+`masquer synth` writes fake Defender advanced-hunting exports: all 66 tables
+from the Microsoft Learn schema, every column, as CSV (UTF-8 or UTF-16 with
+BOM, CRLF, like a portal export) or JSON. Values are fake and use reserved
+ranges (`.example` domains, documentation IPs, fiction phone numbers);
+national IDs, IBANs and organisation numbers carry valid checksums so the
+detectors can be tested. Every planted sensitive value is listed in
+`canaries.json` for leak tests. Exact repeats (only the timestamp differs)
+test event collapsing.
+
+```bash
+# any host with uv (shell), from a checkout
+uv run masquer synth --out ./synth --rows 200
+uv run masquer synth --list
+```
+
