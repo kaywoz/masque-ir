@@ -203,3 +203,28 @@ def test_restore_cli_missing_and_default(synth_case, capsys):
     (case.root / "inbox-2.md").write_text("nothing to restore", encoding="utf-8")
     assert main(["restore", str(case.root)]) == 0
     assert (case.root / "report-2.md").exists()
+
+
+@pytest.mark.parametrize("raw,expect_kinds,kept", [
+    ("net user anna.lindqvist /domain", ["ACCOUNT"], ["/domain"]),
+    (r"schtasks /ru NORDVIND\anna.l /tr C:\Users\anna.l\upd.ps1", ["DOMAIN", "ACCOUNT"], ["upd.ps1"]),
+    (r"whoami NT AUTHORITY\SYSTEM", [], [r"NT AUTHORITY\SYSTEM"]),
+    ("runas /user:erik.k cmd", ["ACCOUNT"], ["runas"]),
+    ("version 10.0.19045.1 report.final.docx", [], ["10.0.19045.1", "report.final.docx"]),
+    ("ping srv01.corp.acme.example", ["DOMAIN"], []),
+])
+def test_accounts_not_domains(tmp_path, raw, expect_kinds, kept):
+    out = masker(tmp_path).text(raw)
+    kinds = {m.group(1) for m in TOKEN_RE.finditer(out)}
+    assert kinds == set(expect_kinds), out
+    for k in kept:
+        assert k in out, out
+    assert "DOMAIN" not in kinds or "srv01" not in out
+
+
+def test_account_after_known_domain(tmp_path):
+    m = masker(tmp_path)
+    m.value("AccountDomain", "NORDVIND")
+    m.refresh_sweep()
+    out = m.text(r"schtasks /ru NORDVIND\aino.dubois /tr x")
+    assert "aino" not in out and out.count("«") == 2, out

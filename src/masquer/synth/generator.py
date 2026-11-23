@@ -22,7 +22,7 @@ from .values import CITIES, Faker
 # well-known values from the portal schema reference (not from the extracted
 # pages), used only to make synthetic data realistic.
 COMMON_ACTIONS = {
-    "DeviceProcessEvents": ["ProcessCreated", "OpenProcessApiCall"],
+    "DeviceProcessEvents": ["ProcessCreated"],
     "DeviceNetworkEvents": ["ConnectionSuccess", "ConnectionFailed", "InboundConnectionAccepted",
                             "ListeningConnectionCreated", "ConnectionRequest"],
     "DeviceLogonEvents": ["LogonSuccess", "LogonFailed", "LogonAttempted"],
@@ -30,7 +30,7 @@ COMMON_ACTIONS = {
     "DeviceRegistryEvents": ["RegistryValueSet", "RegistryKeyCreated", "RegistryKeyDeleted",
                              "RegistryValueDeleted"],
     "DeviceImageLoadEvents": ["ImageLoaded"],
-    "DeviceEvents": ["AntivirusDetection", "PowerShellCommand", "ScheduledTaskCreated",
+    "DeviceEvents": ["AntivirusDetection", "PowerShellCommand", "ScheduledTaskCreated", "OpenProcessApiCall",
                      "UsbDriveMounted", "DnsQueryResponse", "ProcessCreatedUsingWmiQuery",
                      "ExploitGuardNetworkProtectionBlocked", "SmartScreenUrlWarning"],
     "IdentityLogonEvents": ["LogonSuccess", "LogonFailed"],
