@@ -43,6 +43,20 @@ COLUMN_RULES: list[tuple[str, str, bool]] = [
 KEEP = re.compile(r"^(timestamp|actiontype|.*sha1|.*sha256|.*md5)$", re.IGNORECASE)
 
 
+# Built-in Windows principals: the same on every machine, never customer data.
+WELL_KNOWN_PRINCIPALS = {
+    "system", "local system", "localsystem", "local service", "network service", "nt authority",
+    "builtin", "nt service", "window manager", "font driver host", "workgroup", "anonymous logon",
+    "nt authority\\system", "nt authority\\local service", "nt authority\\network service",
+}
+WELL_KNOWN_SID = re.compile(r"^S-1-(?:5-(?:18|19|20|32-\d+|80-[\d-]+|90-\d+|96-\d+)|0-0|1-0|3-[0-4])$")
+
+
+def well_known(value: str) -> bool:
+    v = value.strip().casefold()
+    return v in WELL_KNOWN_PRINCIPALS or bool(WELL_KNOWN_SID.match(value.strip()))
+
+
 def column_kind(name: str) -> str | None:
     """Token kind for whole-value tokenisation, "keep", or None for free text."""
     if KEEP.match(name):

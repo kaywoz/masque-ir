@@ -267,3 +267,13 @@ def test_rules_in_custom_prompt(synth_case, tmp_path):
     case, _, _ = synth_case
     text = case.render("My own question.")[0]
     assert "My own question." in text and "```markdown" in text and "Keep every «…» token" in text
+
+
+def test_well_known_principals_kept(tmp_path):
+    m = masker(tmp_path)
+    assert m.value("AccountName", "system") == "system"
+    assert m.value("AccountDomain", "NT AUTHORITY") == "NT AUTHORITY"
+    assert m.value("AccountSid", "S-1-5-18") == "S-1-5-18"
+    m.refresh_sweep()
+    assert m.text("Microsoft® Windows® Operating System") == "Microsoft® Windows® Operating System"
+    assert "S-1-5-21" not in m.value("AccountSid", "S-1-5-21-1111111111-2222222222-3333333333-1001")

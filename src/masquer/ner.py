@@ -24,7 +24,10 @@ NOT_NAMES = {
     "microsoft", "system", "admin", "administrator", "user", "users", "update", "invoice", "payload",
     "setup", "temp", "downloads", "documents", "desktop", "appdata", "local", "program", "files",
     "lönespec", "faktura", "utbetalning", "budget", "public", "default", "guest", "service",
+    "office", "root", "application", "google", "mozilla", "firefox", "adobe", "acrobat", "zoom", "slack",
 }
+# A lone word is a weaker signal than first + last name together.
+SINGLE_WORD_MIN_SCORE = 0.6
 # Gap text allowed between two spans that form one name ("Anna Berg", "Anna_Berg").
 JOIN = re.compile(r"[ _.\-]{1,2}")
 
@@ -94,16 +97,19 @@ class NameDetector:
                                            threshold=self.threshold, batch_size=self.batch)
             for (t, off, _), ents in zip(chunk, results):
                 # Merge neighbouring spans into one name, then filter.
-                merged: list[list[int]] = []
+                merged: list[list] = []  # [start, end, max score, parts]
                 for e in sorted(ents, key=lambda e: e["start"]):
                     st, en = off + e["start"], off + e["end"]
                     if merged and JOIN.fullmatch(t[merged[-1][1]:st] or "-"):
                         merged[-1][1] = max(merged[-1][1], en)
+                        merged[-1][2] = max(merged[-1][2], e.get("score", 1.0))
+                        merged[-1][3] += 1
                     else:
-                        merged.append([st, en])
-                for st, en in merged:
+                        merged.append([st, en, e.get("score", 1.0), 1])
+                for st, en, score, parts in merged:
                     span = trim(t[st:en])
-                    if keep(span):
+                    single = len(re.split(r"[ _.\-]+", span)) == 1
+                    if keep(span) and not (single and score < SINGLE_WORD_MIN_SCORE):
                         self.cache[t].append(span)
 
     def spans(self, text: str) -> list[str]:
