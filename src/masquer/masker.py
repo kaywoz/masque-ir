@@ -129,7 +129,9 @@ class Masker:
                         return v
                 return self.tok(kind, v)
             s = self._sub(s, rx, repl)
-        s = self._sub(s, detect.ACCOUNT_ARG_RE, lambda m: m.group(1) + self.tok("ACCOUNT", m.group(2)))
+        s = self._sub(s, detect.ACCOUNT_ARG_RE,
+                      lambda m: m.group(0) if detect.well_known(m.group(2))
+                      else m.group(1) + self.tok("ACCOUNT", m.group(2)))
 
         s = self._sub(s, detect.USERPATH_RE,
                       lambda m: m.group(0) if m.group(2).casefold() in detect.SYSTEM_PROFILES
@@ -187,6 +189,8 @@ class Masker:
             return s if k in (None, "keep") else self.tok(k, s)
         if kind == "DOMAIN" and self.allowed_domain(s):
             return s.replace(".", "[.]")
+        if kind in ("ACCOUNT", "DOMAIN", "SID", "PERSON", "UPN") and detect.well_known(s):
+            return s  # built-in Windows principal (SYSTEM, NT AUTHORITY, S-1-5-18 …)
         if kind:
             return self.tok(kind, s)
         return self.text(s)

@@ -79,6 +79,7 @@ def test_keep_filter():
     from masquer.ner import keep
     assert keep("Anna Berg") and keep("Sigrún")
     assert not keep("powershell") and not keep("Powershell") and not keep("a") and not keep("cmd.exe")
+    assert not keep("Office16")
 
 
 def test_trim():

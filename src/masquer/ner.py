@@ -7,8 +7,10 @@ Optional dependency: `masquer[ner]` (gliner + torch).
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
+import warnings
 from pathlib import Path
 
 LABELS = ("person", "first name", "last name", "full name")
@@ -22,7 +24,10 @@ NOT_NAMES = {
     "microsoft", "system", "admin", "administrator", "user", "users", "update", "invoice", "payload",
     "setup", "temp", "downloads", "documents", "desktop", "appdata", "local", "program", "files",
     "lönespec", "faktura", "utbetalning", "budget", "public", "default", "guest", "service",
+    "office", "root", "application", "google", "mozilla", "firefox", "adobe", "acrobat", "zoom", "slack",
 }
+# A lone word is a weaker signal than first + last name together.
+SINGLE_WORD_MIN_SCORE = 0.6
 # Gap text allowed between two spans that form one name ("Anna Berg", "Anna_Berg").
 JOIN = re.compile(r"[ _.\-]{1,2}")
 
@@ -42,6 +47,7 @@ def trim(span: str) -> str:
 
 def keep(span: str) -> bool:
     return (len(span) >= 2 and not span.islower() and span.casefold() not in NOT_NAMES
+            and not re.search(r"\d", span)  # names carry no digits (Office16, a1b2)
             and not re.search(r"\.(exe|dll|ps1|bat|cmd|js|vbs)$", span, re.I))
 
 
@@ -54,6 +60,12 @@ class NameDetector:
     def __init__(self, model_dir: Path, threshold: float = 0.4, batch: int = 16):
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+        # torch and gliner print deprecation notes and a macOS redirect notice
+        # on import; they say nothing about the result.
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        warnings.filterwarnings("ignore", category=UserWarning, module=r"(torch|gliner|transformers)")
+        logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
         try:
             from gliner import GLiNER
         except ImportError as e:  # pragma: no cover - depends on the extra
@@ -82,20 +94,23 @@ class NameDetector:
                 windows.append((t, i, self._probe(t[i:i + MAX_CHARS])))
         for b in range(0, len(windows), self.batch):
             chunk = windows[b:b + self.batch]
-            results = self.model.batch_predict_entities([w[2] for w in chunk], list(LABELS),
-                                                        threshold=self.threshold)
+            results = self.model.inference([w[2] for w in chunk], list(LABELS),
+                                           threshold=self.threshold, batch_size=self.batch)
             for (t, off, _), ents in zip(chunk, results):
                 # Merge neighbouring spans into one name, then filter.
-                merged: list[list[int]] = []
+                merged: list[list] = []  # [start, end, max score, parts]
                 for e in sorted(ents, key=lambda e: e["start"]):
                     st, en = off + e["start"], off + e["end"]
                     if merged and JOIN.fullmatch(t[merged[-1][1]:st] or "-"):
                         merged[-1][1] = max(merged[-1][1], en)
+                        merged[-1][2] = max(merged[-1][2], e.get("score", 1.0))
+                        merged[-1][3] += 1
                     else:
-                        merged.append([st, en])
-                for st, en in merged:
+                        merged.append([st, en, e.get("score", 1.0), 1])
+                for st, en, score, parts in merged:
                     span = trim(t[st:en])
-                    if keep(span):
+                    single = len(re.split(r"[ _.\-]+", span)) == 1
+                    if keep(span) and not (single and score < SINGLE_WORD_MIN_SCORE):
                         self.cache[t].append(span)
 
     def spans(self, text: str) -> list[str]:
