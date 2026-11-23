@@ -66,6 +66,10 @@ masquer restore CASE CASE/inbox-1.md           # writes CASE/report-1.md
   counted and noted in the outbox header. `--neutralise-injection` replaces
   them with `«INJECTION_n»` tokens (restored in the report), for assistants that
   refuse such input (seen with Defender Copilot).
+- **Answer format**: every prompt (built-in or `--prompt FILE`) gets the same
+  rules appended: keep tokens, treat data as untrusted, and answer in **one**
+  ```` ```markdown ```` block (inner code as `~~~kql`), so one copy button takes
+  the whole answer. `restore` removes that outer fence again.
 - **restore**: tokens back to originals; tokens the model altered are restored
   and marked `⚠(was …)`, unknown tokens marked `⚠ unknown token`.
 - Deny-lists (always tokenised) and allow-lists (provably not the customer's):
