@@ -7,6 +7,8 @@
 #   --dry-run   show what an install would do; changes nothing
 #   --verify    check an existing install
 #   --ref REF   install this tag or branch instead of the latest release
+#   --wheel F   install masquer from a local wheel file (no PyPI, no GitHub)
+#   --prefer-wheel  use the release wheel even when PyPI is reachable
 #   --help      this text
 #
 # Everything goes in the user's profile (~/.local); no sudo. Models are not
@@ -55,7 +57,7 @@ info() { say INFO "$1" "$2"; }
 warn() { say WARN "$1" "$2"; warns=$((warns + 1)); }
 fail() { say FAIL "$1" "$2"; fails=$((fails + 1)); }
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # --- helpers ---------------------------------------------------------------
 
@@ -327,6 +329,36 @@ install_uv() {
   echo "uv: installed $("$BIN_DIR/uv" --version) to $BIN_DIR (SHA256 checked)"
 }
 
+pypi_reachable() {
+  reachable pypi.org && reachable files.pythonhosted.org
+}
+
+# Download a release's wheel and check it against the release's SHA256SUMS.
+# Prints the local wheel path. The wheel is pure Python (py3-none-any), so the
+# same file serves Linux, WSL2 and macOS.
+fetch_release_wheel() {
+  tag="$1"
+  ver="${tag#v}"
+  whl="masquer-$ver-py3-none-any.whl"
+  base="${MASQUER_RELEASE_BASE:-https://github.com/$REPO/releases/download}/$tag"
+  W="$(mktemp -d)"
+  if ! curl -fsSL -m 120 -o "$W/$whl" "$base/$whl" ||
+     ! curl -fsSL -m 60 -o "$W/SHA256SUMS" "$base/SHA256SUMS"; then
+    echo "masquer: release $tag has no $whl or SHA256SUMS" >&2
+    rm -rf "$W"
+    return 1
+  fi
+  [ -s "$W/$whl" ] || { echo "masquer: $whl is empty" >&2; rm -rf "$W"; return 1; }
+  want="$(awk -v f="$whl" '$2 == f || $2 == "*"f || $2 == "dist/"f {print $1}' "$W/SHA256SUMS")"
+  got="$(sha256_of "$W/$whl")"
+  if [ -z "$want" ] || [ "$got" != "$want" ]; then
+    echo "masquer: SHA256 mismatch for $whl (got $got, want ${want:-none}); nothing installed" >&2
+    rm -rf "$W"
+    return 1
+  fi
+  echo "$W/$whl"
+}
+
 run_install() {
   if ! run_check; then
     echo "Install stopped: fix the FAIL lines above first." >&2
@@ -336,17 +368,40 @@ run_install() {
   install_uv || return 1
   uvbin="$(command -v uv 2>/dev/null || echo "$BIN_DIR/uv")"
 
-  if [ -z "$ref" ]; then
-    ref="$(latest_tag)"
-    if [ -z "$ref" ]; then
-      ref=main
-      echo "masquer: no release yet; installing from the main branch"
+  if [ -n "$wheel" ]; then
+    # Local wheel: no index, no source build.
+    [ -s "$wheel" ] || { echo "masquer: wheel $wheel not found or empty" >&2; return 1; }
+    echo "masquer: installing local wheel $(basename "$wheel")"
+    UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --no-index --python ">=3.11" "$wheel" ||
+      { echo "masquer: install from wheel failed" >&2; return 1; }
+  else
+    [ -n "$ref" ] || ref="$(latest_tag)"
+    use_wheel=no
+    if [ -n "$ref" ] && { [ "$prefer_wheel" = yes ] || ! pypi_reachable; }; then
+      case "$ref" in v[0-9]*) use_wheel=yes ;; esac
+    fi
+    if [ "$use_wheel" = yes ]; then
+      echo "masquer: installing the $ref release wheel (no PyPI needed)"
+      w="$(fetch_release_wheel "$ref")" || return 1
+      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --no-index --python ">=3.11" "$w" ||
+        { echo "masquer: install from wheel failed" >&2; rm -rf "$(dirname "$w")"; return 1; }
+      rm -rf "$(dirname "$w")"
+    else
+      if ! pypi_reachable; then
+        echo "masquer: PyPI isn't reachable and there is no release wheel for '${ref:-main}';" >&2
+        echo "  copy a release wheel here and run: bash install.sh --wheel FILE" >&2
+        return 1
+      fi
+      if [ -z "$ref" ]; then
+        ref=main
+        echo "masquer: no release yet; installing from the main branch"
+      fi
+      echo "masquer: building and installing $ref (source, needs PyPI)"
+      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --python ">=3.11" \
+        "masquer @ https://github.com/$REPO/archive/$ref.tar.gz" ||
+        { echo "masquer: install failed (PyPI and GitHub must be reachable)" >&2; return 1; }
     fi
   fi
-  src="https://github.com/$REPO/archive/$ref.tar.gz"
-  echo "masquer: installing $ref"
-  UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --python ">=3.11" "masquer @ $src" ||
-    { echo "masquer: install failed (PyPI and GitHub must be reachable)" >&2; return 1; }
 
   mkdir -p "$PREFIX_DATA" "$PREFIX_CONF" && chmod 700 "$PREFIX_CONF" || return 1
 
@@ -368,7 +423,13 @@ run_dry_run() {
   else
     echo "  2. download uv $UV_VERSION ($(uv_target 2>/dev/null || echo unsupported)) from GitHub, check its SHA256, put it in $BIN_DIR"
   fi
-  echo "  3. install masquer (${ref:-latest release, else main}) with 'uv tool install' into $BIN_DIR"
+  if [ -n "$wheel" ]; then
+    echo "  3. install masquer from the local wheel $wheel (no index) into $BIN_DIR"
+  else
+    echo "  3. install masquer (${ref:-latest release, else main}) into $BIN_DIR:"
+    echo "     the release wheel (SHA256 from SHA256SUMS) when PyPI is blocked or --prefer-wheel,"
+    echo "     otherwise a source build from GitHub (needs PyPI)"
+  fi
   echo "  4. create $PREFIX_DATA and $PREFIX_CONF (mode 700, for the local deny-lists)"
   echo "  5. run --verify"
   echo "Nothing is changed."
@@ -378,6 +439,8 @@ run_dry_run() {
 
 mode=install
 ref=""
+wheel=""
+prefer_wheel=no
 while [ $# -gt 0 ]; do
   case "$1" in
     --check)   mode=check ;;
@@ -385,6 +448,9 @@ while [ $# -gt 0 ]; do
     --dry-run) mode=dry-run ;;
     --ref)     [ $# -ge 2 ] || { echo "install.sh: --ref needs a value" >&2; exit 2; }
                ref="$2"; shift ;;
+    --wheel)   [ $# -ge 2 ] || { echo "install.sh: --wheel needs a file" >&2; exit 2; }
+               wheel="$2"; shift ;;
+    --prefer-wheel) prefer_wheel=yes ;;
     --help|-h) usage; exit 0 ;;
     *) echo "install.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
   esac
