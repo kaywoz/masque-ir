@@ -53,9 +53,27 @@ def cmd_outbox(a: argparse.Namespace) -> int:
 
 
 def cmd_restore(a: argparse.Namespace) -> int:
+    import re
+
     from .case import Case
 
-    dest, stats = Case(Path(a.case)).restore(Path(a.inbox))
+    case = Case(Path(a.case))
+    if a.inbox:
+        inbox = Path(a.inbox)
+    else:
+        found = sorted(case.root.glob("inbox-*.md"),
+                       key=lambda p: int(m.group(1)) if (m := re.search(r"(\d+)", p.stem)) else 0)
+        if not found:
+            print(f"masquer restore: no inbox-N.md in {case.root}. Save the chat answer there first, e.g.\n"
+                  f"  macOS: pbpaste > {case.root}/inbox-1.md\n"
+                  f"  WSL:   powershell.exe -NoProfile -Command Get-Clipboard > {case.root}/inbox-1.md",
+                  file=sys.stderr)
+            return 2
+        inbox = found[-1]
+    if not inbox.is_file() or inbox.stat().st_size == 0:
+        print(f"masquer restore: {inbox} is missing or empty; save the chat answer there first", file=sys.stderr)
+        return 2
+    dest, stats = case.restore(inbox)
     print(f"{dest}: " + ", ".join(f"{k} {v}" for k, v in sorted(stats.items())) or "no tokens")
     if stats.get("unknown") or stats.get("restored_altered"):
         print("Check the lines marked ⚠ in the report.")
@@ -101,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
 
     r = sub.add_parser("restore", help="put the original values back into a saved answer")
     r.add_argument("case")
-    r.add_argument("inbox", help="the cloud answer saved as a file, e.g. CASE/inbox-1.md")
+    r.add_argument("inbox", nargs="?", help="the saved cloud answer (default: newest CASE/inbox-N.md)")
     r.set_defaults(func=cmd_restore)
 
     a = p.parse_args(argv)

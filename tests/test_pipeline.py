@@ -189,3 +189,17 @@ def test_restore_roundtrip(synth_case, tmp_path):
     assert out.count(original) == 2
     assert "⚠ unknown token" in out and "⚠(was" in out
     assert stats["restored"] == 1 and stats["unknown"] == 1 and stats["restored_altered"] == 1
+
+
+def test_restore_cli_missing_and_default(synth_case, capsys):
+    from masquer.cli import main
+
+    case, _, _ = synth_case
+    for p in case.root.glob("inbox-*.md"):
+        p.unlink()
+    assert main(["restore", str(case.root)]) == 2
+    assert "no inbox-N.md" in capsys.readouterr().err
+    assert main(["restore", str(case.root), str(case.root / "inbox-7.md")]) == 2
+    (case.root / "inbox-2.md").write_text("nothing to restore", encoding="utf-8")
+    assert main(["restore", str(case.root)]) == 0
+    assert (case.root / "report-2.md").exists()
