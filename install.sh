@@ -526,12 +526,14 @@ run_install() {
   install_uv || return 1
   extra=""
   noindex="--no-index"
+  pyreq=">=3.11"
   if [ "$with_ner" = yes ]; then
     extra="[ner]"
     noindex=""  # gliner and CPU torch come from PyPI and download.pytorch.org
     # CPU-only torch: the default Linux build pulls several GB of CUDA libraries.
     # (pyproject's tool.uv.sources isn't applied to URL installs; this is.)
     export UV_TORCH_BACKEND=cpu
+    pyreq=">=3.11,<3.14"  # torch.jit warns it may break on 3.14+
   fi
   uvbin="$(command -v uv 2>/dev/null || echo "$BIN_DIR/uv")"
 
@@ -539,7 +541,7 @@ run_install() {
     # Local wheel: no index, no source build.
     [ -s "$wheel" ] || { echo "masquer: wheel $wheel not found or empty" >&2; return 1; }
     echo "masquer: installing local wheel $(basename "$wheel")"
-    UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --python ">=3.11" "masquer$extra @ file://$(cd "$(dirname "$wheel")" && pwd)/$(basename "$wheel")" ||
+    UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --python "$pyreq" "masquer$extra @ file://$(cd "$(dirname "$wheel")" && pwd)/$(basename "$wheel")" ||
       { echo "masquer: install from wheel failed" >&2; return 1; }
   else
     [ -n "$ref" ] || ref="$(latest_tag)"
@@ -550,7 +552,7 @@ run_install() {
     if [ "$use_wheel" = yes ]; then
       echo "masquer: installing the $ref release wheel (no PyPI needed)"
       w="$(fetch_release_wheel "$ref")" || return 1
-      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --python ">=3.11" "masquer$extra @ file://$w" ||
+      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --python "$pyreq" "masquer$extra @ file://$w" ||
         { echo "masquer: install from wheel failed" >&2; rm -rf "$(dirname "$w")"; return 1; }
       rm -rf "$(dirname "$w")"
     else
@@ -564,7 +566,7 @@ run_install() {
         echo "masquer: no release yet; installing from the main branch"
       fi
       echo "masquer: building and installing $ref (source, needs PyPI)"
-      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --python ">=3.11" \
+      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --python "$pyreq" \
         "masquer$extra @ https://github.com/$REPO/archive/$ref.tar.gz" ||
         { echo "masquer: install failed (PyPI and GitHub must be reachable)" >&2; return 1; }
     fi

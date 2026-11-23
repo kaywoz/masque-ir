@@ -7,8 +7,10 @@ Optional dependency: `masquer[ner]` (gliner + torch).
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
+import warnings
 from pathlib import Path
 
 LABELS = ("person", "first name", "last name", "full name")
@@ -54,6 +56,12 @@ class NameDetector:
     def __init__(self, model_dir: Path, threshold: float = 0.4, batch: int = 16):
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+        # torch and gliner print deprecation notes and a macOS redirect notice
+        # on import; they say nothing about the result.
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        warnings.filterwarnings("ignore", category=UserWarning, module=r"(torch|gliner|transformers)")
+        logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
         try:
             from gliner import GLiNER
         except ImportError as e:  # pragma: no cover - depends on the extra
@@ -82,8 +90,8 @@ class NameDetector:
                 windows.append((t, i, self._probe(t[i:i + MAX_CHARS])))
         for b in range(0, len(windows), self.batch):
             chunk = windows[b:b + self.batch]
-            results = self.model.batch_predict_entities([w[2] for w in chunk], list(LABELS),
-                                                        threshold=self.threshold)
+            results = self.model.inference([w[2] for w in chunk], list(LABELS),
+                                           threshold=self.threshold, batch_size=self.batch)
             for (t, off, _), ents in zip(chunk, results):
                 # Merge neighbouring spans into one name, then filter.
                 merged: list[list[int]] = []
