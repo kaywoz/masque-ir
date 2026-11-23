@@ -63,6 +63,10 @@ WSL: raise `memory=` in `.wslconfig` if WSL sees under ~8 GB.
 - Model licences, sizes, Swedish support, GLiNER ONNX export: unverified (Hugging Face / Ollama blocked in the planning session).
 - CPU speed of the 4B model: measure on the first test.
 
+## Built so far
+- `install.sh --check/--dry-run/--verify` (#2).
+- `masquer synth`: synthetic exports for all advanced-hunting tables from the Microsoft Learn schema (kaywoz 2026-11-23: build from the schema docs, as much as possible). Real export headers can still correct column order or format later.
+
 ## Parked
 Native Windows build, API mode, other input sources, MDE investigation package.
 - Web UI (later, kaywoz 2026-11-23): local import/export: drop an export in, copy the outbox, paste the answer, download the report. Loopback only, with a per-run token; native mode first. Container mode needs a way to publish a port without outbound network (e.g. an internal network with no route out), to be designed then.
