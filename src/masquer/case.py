@@ -140,16 +140,20 @@ class Case:
             raise SystemExit(f"{self.root} is not a case folder (run: masquer case new {self.root})")
         return Store(self.root / "map.sqlite")
 
-    def masker(self, store: Store) -> Masker:
+    def masker(self, store: Store, ner=None) -> Masker:
         deny = load_list(CONFIG / "deny.txt", self.root / "deny.txt")
         allow = load_list(CONFIG / "allow.txt", self.root / "allow.txt")
-        return Masker(store, deny, allow)
+        return Masker(store, deny, allow, ner)
+
+    def imports(self) -> list[dict]:
+        p = self.root / "imports.json"
+        return json.loads(p.read_text("utf-8")) if p.exists() else []
 
     # import ------------------------------------------------------------------
 
-    def import_files(self, files: list[Path], gap: int = 3600) -> dict[str, tuple[int, int]]:
+    def import_files(self, files: list[Path], gap: int = 3600, ner=None) -> dict[str, tuple[int, int]]:
         store = self.store()
-        masker = self.masker(store)
+        masker = self.masker(store, ner)
         result = {}
         loaded = []
         for f in files:
@@ -168,6 +172,10 @@ class Case:
                     if kind not in (None, "keep") and isinstance(v, str) and v and v[:1] not in "[{":
                         masker.value(k, v)
         masker.refresh_sweep()
+        if ner is not None:
+            # Batch the model over every free-text value once (cached by text).
+            ner.prime(v for _, _, rows in loaded for r in rows for k, v in r.items()
+                      if isinstance(v, str) and detect.column_kind(k) is None)
         # Pass 2: mask, collapse, write.
         for f, table, rows in loaded:
             masked = [masker.row(r) for r in rows]
@@ -177,6 +185,9 @@ class Case:
             write_private(out, json.dumps(prev + merged, ensure_ascii=False, indent=0))
             result[table] = (len(rows), len(merged))
         store.commit()
+        log = self.imports() + [{"file": f.name, "table": t, "ner": getattr(ner, "name", None)}
+                                for f, t, _ in loaded]
+        write_private(self.root / "imports.json", json.dumps(log, indent=1))
         store.close()
         return result
 
@@ -238,11 +249,13 @@ class Case:
 
     def outbox(self, prompt: str | None = None, max_chars: int = 150_000,
                allow_without_ner: bool = False, neutralise_injection: bool = False) -> list[Path]:
-        if not allow_without_ner:
+        without = [i["file"] for i in self.imports() if not i.get("ner")]
+        if without and not allow_without_ner:
             raise SystemExit(
-                "The detection stage (local model for names in free text) isn't installed yet: person and "
-                "company names that appear only in free text are not detected.\n"
-                "Re-run with --allow-without-ner to write the outbox anyway, after checking it by hand.")
+                f"{len(without)} import(s) ran without the name-detection stage ({', '.join(without[:3])}): "
+                "person and company names that appear only in free text may be left.\n"
+                "Re-import with the model installed (install.sh --with-ner), or re-run with "
+                "--allow-without-ner after checking the outbox by hand.")
         store = self.store()
         masker = self.masker(store)
         masker.refresh_sweep()

@@ -75,9 +75,14 @@ masquer restore CASE CASE/inbox-1.md           # writes CASE/report-1.md
 - Deny-lists (always tokenised) and allow-lists (provably not the customer's):
   `~/.config/masquer/deny.txt`, `allow.txt`, and `deny.txt`/`allow.txt` in the
   case folder. One value per line.
-- **Not yet:** names that appear only in free text (not in any identity column)
-  need the detection stage (local model). Until it lands, `outbox` refuses to
-  run without `--allow-without-ner`; check the outbox by hand.
+- **Name detection** (optional, `install.sh --with-ner`): a local GLiNER model
+  (`knowledgator/gliner-pii-edge-v1.0`, Apache-2.0, 185 MB, pinned by revision
+  and SHA256) finds person names in free text, file names and subjects during
+  `import`. It only adds tokens; the egress gate still decides. CPU only (torch
+  from the CPU index on Linux, ~1 GB installed). Offline machines:
+  `install.sh --with-ner --models-from DIR` with the five model files copied
+  from another machine. Without the model, `outbox` refuses to run unless
+  `--allow-without-ner` is given (check the outbox by hand then).
 
 ## Synthetic test data
 

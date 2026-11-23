@@ -9,6 +9,9 @@
 #   --ref REF   install this tag or branch instead of the latest release
 #   --wheel F   install masquer from a local wheel file (no PyPI, no GitHub)
 #   --prefer-wheel  use the release wheel even when PyPI is reachable
+#   --with-ner  also install the name-detection stage (gliner, CPU torch,
+#               the pinned GLiNER model, ~1.2 GB in total)
+#   --models-from DIR  take the model files from DIR instead of Hugging Face
 #   --help      this text
 #
 # Everything goes in the user's profile (~/.local); no sudo. Models are not
@@ -21,6 +24,7 @@ trap 'echo "install.sh: failed at line $LINENO" >&2' ERR
 
 PREFIX_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/masquer"
 PREFIX_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/masquer"
+MODEL_DIR="$PREFIX_DATA/models/gliner-pii"
 
 # Thresholds. Models: GLiNER ~1 GB + Qwen3.5 4B Q4 ~3 GB, plus headroom.
 # RAM in MiB with 0.5 GiB slack: the kernel reserves memory, so an 8 GB
@@ -33,6 +37,15 @@ MIN_DISK_GB=6
 NET_HOSTS="github.com release-assets.githubusercontent.com codeload.github.com pypi.org files.pythonhosted.org huggingface.co"
 
 REPO="kaywoz/masque-ir"
+NER_HOSTS="download.pytorch.org download-r2.pytorch.org huggingface.co us.aws.cdn.hf.co"
+# Name-detection model, pinned: repository, revision and SHA256 per file.
+MODEL_REPO="knowledgator/gliner-pii-edge-v1.0"
+MODEL_REV="9b7f39b0a2da971a5beea78d35f1539d4009c891"
+MODEL_FILES="gliner_config.json 77e6b57335c4bfd461e9041682196dd6c373a0b09bbd9269ef9e95b807915340
+tokenizer.json 84b3a9b18f04a0ccd03b72d9f871b7e0bec40fd7021ef50bc30a7c3693c11205
+tokenizer_config.json 3398f6d1ad4b4c4f9874d390d060a75c58cad5e5ce9b22841b3e40643b4ada27
+special_tokens_map.json ea97ecdbcc73713039d8d64dbb05e3689495c96657fbd9a18f5bed381be81049
+pytorch_model.bin 0160706fa5d034410175cc53808419d975658e12f1cac1a916fbde8155155add"
 BIN_DIR="$HOME/.local/bin"
 
 # uv, pinned: version and the SHA256 of each release asset (from the
@@ -57,7 +70,7 @@ info() { say INFO "$1" "$2"; }
 warn() { say WARN "$1" "$2"; warns=$((warns + 1)); }
 fail() { say FAIL "$1" "$2"; fails=$((fails + 1)); }
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # --- helpers ---------------------------------------------------------------
 
@@ -215,14 +228,17 @@ run_check() {
   # curl (needed for the install only)
   if command -v curl >/dev/null 2>&1; then
     pass curl "present"
-    for h in $NET_HOSTS; do
+    hosts="$NET_HOSTS"
+    [ "$with_ner" = yes ] && hosts="$hosts $NER_HOSTS"
+    for h in $hosts; do
       rc="$(probe "$h")"
       if [ "$rc" = 0 ]; then
         pass net "$h reachable"
         continue
       fi
       case "$h" in
-        huggingface.co) hint="copy the models in later with --models-from DIR" ;;
+        huggingface.co|us.aws.cdn.hf.co) hint="copy the model in with --models-from DIR" ;;
+        download.pytorch.org|download-r2.pytorch.org) hint="needed for CPU torch (--with-ner); ask IT to allow it" ;;
         pypi.org|files.pythonhosted.org) hint="needed for the uv fallback and source builds" ;;
         release-assets.githubusercontent.com) hint="uv falls back to PyPI; release wheels and managed Python need it" ;;
         *)              hint="needed to download masquer" ;;
@@ -281,6 +297,24 @@ run_verify() {
     fi
   else
     info config "$PREFIX_CONF missing: no deny-lists yet"
+  fi
+  if [ -d "$MODEL_DIR" ]; then
+    bad=0
+    while read -r name want; do
+      [ -n "$name" ] || continue
+      if [ ! -f "$MODEL_DIR/$name" ] || [ "$(sha256_of "$MODEL_DIR/$name")" != "$want" ]; then
+        bad=$((bad + 1))
+      fi
+    done <<EOF_MODEL
+$MODEL_FILES
+EOF_MODEL
+    if [ "$bad" -eq 0 ]; then
+      pass model "$MODEL_REPO ($MODEL_REV) in $MODEL_DIR, SHA256 ok"
+    else
+      fail model "$bad model file(s) missing or changed in $MODEL_DIR; re-run with --with-ner"
+    fi
+  else
+    info model "name-detection model not installed (install with --with-ner)"
   fi
   if command -v masquer >/dev/null 2>&1; then
     if v="$(masquer --version 2>/dev/null)"; then
@@ -454,6 +488,35 @@ fetch_release_wheel() {
   echo "$W/$whl"
 }
 
+# Model files into MODEL_DIR, each checked against its pinned SHA256; files
+# already in place with the right hash are kept. From --models-from DIR when
+# given, else from Hugging Face at the pinned revision.
+install_model() {
+  mkdir -p "$MODEL_DIR" || return 1
+  echo "$MODEL_FILES" | while read -r name want; do
+    [ -n "$name" ] || continue
+    dest="$MODEL_DIR/$name"
+    if [ -f "$dest" ] && [ "$(sha256_of "$dest")" = "$want" ]; then
+      echo "model: $name ok"
+      continue
+    fi
+    T="$(mktemp)"
+    if [ -n "$models_from" ]; then
+      cp "$models_from/$name" "$T" || { echo "model: $name missing in $models_from" >&2; rm -f "$T"; exit 1; }
+    else
+      curl -fsSL -m 900 -o "$T" "https://huggingface.co/$MODEL_REPO/resolve/$MODEL_REV/$name" ||
+        { echo "model: download failed: $name (use --models-from DIR)" >&2; rm -f "$T"; exit 1; }
+    fi
+    got="$(sha256_of "$T")"
+    if [ ! -s "$T" ] || [ "$got" != "$want" ]; then
+      echo "model: SHA256 mismatch for $name (got $got, want $want); not installed" >&2
+      rm -f "$T"
+      exit 1
+    fi
+    install -m 644 "$T" "$dest" && rm -f "$T" && echo "model: $name installed (SHA256 checked)"
+  done
+}
+
 run_install() {
   if ! run_check; then
     echo "Install stopped: fix the FAIL lines above first." >&2
@@ -461,13 +524,19 @@ run_install() {
   fi
   echo
   install_uv || return 1
+  extra=""
+  noindex="--no-index"
+  if [ "$with_ner" = yes ]; then
+    extra="[ner]"
+    noindex=""  # gliner and CPU torch come from PyPI and download.pytorch.org
+  fi
   uvbin="$(command -v uv 2>/dev/null || echo "$BIN_DIR/uv")"
 
   if [ -n "$wheel" ]; then
     # Local wheel: no index, no source build.
     [ -s "$wheel" ] || { echo "masquer: wheel $wheel not found or empty" >&2; return 1; }
     echo "masquer: installing local wheel $(basename "$wheel")"
-    UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --no-index --python ">=3.11" "$wheel" ||
+    UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --python ">=3.11" "masquer$extra @ file://$(cd "$(dirname "$wheel")" && pwd)/$(basename "$wheel")" ||
       { echo "masquer: install from wheel failed" >&2; return 1; }
   else
     [ -n "$ref" ] || ref="$(latest_tag)"
@@ -478,7 +547,7 @@ run_install() {
     if [ "$use_wheel" = yes ]; then
       echo "masquer: installing the $ref release wheel (no PyPI needed)"
       w="$(fetch_release_wheel "$ref")" || return 1
-      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --no-index --python ">=3.11" "$w" ||
+      UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force $noindex --python ">=3.11" "masquer$extra @ file://$w" ||
         { echo "masquer: install from wheel failed" >&2; rm -rf "$(dirname "$w")"; return 1; }
       rm -rf "$(dirname "$w")"
     else
@@ -493,12 +562,15 @@ run_install() {
       fi
       echo "masquer: building and installing $ref (source, needs PyPI)"
       UV_TOOL_BIN_DIR="$BIN_DIR" "$uvbin" tool install --force --python ">=3.11" \
-        "masquer @ https://github.com/$REPO/archive/$ref.tar.gz" ||
+        "masquer$extra @ https://github.com/$REPO/archive/$ref.tar.gz" ||
         { echo "masquer: install failed (PyPI and GitHub must be reachable)" >&2; return 1; }
     fi
   fi
 
   mkdir -p "$PREFIX_DATA" "$PREFIX_CONF" && chmod 700 "$PREFIX_CONF" || return 1
+  if [ "$with_ner" = yes ]; then
+    install_model || return 1
+  fi
 
   case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
@@ -536,6 +608,8 @@ mode=install
 ref=""
 wheel=""
 prefer_wheel=no
+with_ner=no
+models_from=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --check)   mode=check ;;
@@ -546,6 +620,9 @@ while [ $# -gt 0 ]; do
     --wheel)   [ $# -ge 2 ] || { echo "install.sh: --wheel needs a file" >&2; exit 2; }
                wheel="$2"; shift ;;
     --prefer-wheel) prefer_wheel=yes ;;
+    --with-ner) with_ner=yes ;;
+    --models-from) [ $# -ge 2 ] || { echo "install.sh: --models-from needs a folder" >&2; exit 2; }
+                   models_from="$2"; with_ner=yes; shift ;;
     --help|-h) usage; exit 0 ;;
     *) echo "install.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
   esac
