@@ -67,6 +67,12 @@ WSL: raise `memory=` in `.wslconfig` if WSL sees under ~8 GB.
 - `install.sh --check/--dry-run/--verify` (#2); install mode: uv pinned from GitHub with SHA256, masquer via `uv tool install` (kaywoz 2026-11-23: uv is a prerequisite the installer adds when missing).
 - `masquer synth`: synthetic exports for all advanced-hunting tables from the Microsoft Learn schema (kaywoz 2026-11-23: build from the schema docs, as much as possible). Real export headers can still correct column order or format later.
 
+- Core pipeline: import (column rules, detectors, known-values sweep, defang, collapse), outbox with egress gate, restore; leak tests against `canaries.json` in CI (Linux, macOS). Full synthetic run (66 tables, 13,200 rows, 78,373 canaries): import 25 s, outbox and gate 21 s; only `person_name` and `file_pii` leak, by design until the detection stage.
+
+## Next
+- Detection stage (GLiNER-PII, then optional Qwen recheck) for names in free text; drop `--allow-without-ner` once leak tests pass for all kinds.
+- Outbox size: a full 66-table export is 7 MB (53 parts); add per-table summaries and a `--tables`/time-window filter for chat-sized outboxes.
+
 ## Parked
 Native Windows build, API mode, other input sources, MDE investigation package.
 - Web UI (later, kaywoz 2026-11-23): local import/export: drop an export in, copy the outbox, paste the answer, download the report. Loopback only, with a per-run token; native mode first. Container mode needs a way to publish a port without outbound network (e.g. an internal network with no route out), to be designed then.

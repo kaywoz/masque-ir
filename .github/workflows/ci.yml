@@ -1,0 +1,26 @@
+# Tests, including the canary leak tests, on Linux and macOS.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Tests
+        run: uv run --frozen pytest -q
+      - name: Installer lint
+        if: runner.os == 'Linux'
+        run: shellcheck -s bash install.sh

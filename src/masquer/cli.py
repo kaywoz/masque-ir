@@ -24,6 +24,44 @@ def cmd_synth(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_case(a: argparse.Namespace) -> int:
+    from .case import Case
+
+    c = Case.create(Path(a.dir))
+    print(f"case folder {c.root} (mode 700)")
+    return 0
+
+
+def cmd_import(a: argparse.Namespace) -> int:
+    from .case import Case
+
+    res = Case(Path(a.case)).import_files([Path(f) for f in a.files], a.gap)
+    for table, (rows, merged) in res.items():
+        print(f"{table}: {rows} rows -> {merged} after collapsing")
+    return 0
+
+
+def cmd_outbox(a: argparse.Namespace) -> int:
+    from .case import Case
+
+    prompt = Path(a.prompt).read_text(encoding="utf-8") if a.prompt else None
+    paths = Case(Path(a.case)).outbox(prompt, a.max_chars, a.allow_without_ner)
+    for p in paths:
+        print(f"{p}  ({p.stat().st_size} bytes)")
+    print("Egress gate: passed. Paste the file(s) into the chat; save the answer as inbox-N.md in the case.")
+    return 0
+
+
+def cmd_restore(a: argparse.Namespace) -> int:
+    from .case import Case
+
+    dest, stats = Case(Path(a.case)).restore(Path(a.inbox))
+    print(f"{dest}: " + ", ".join(f"{k} {v}" for k, v in sorted(stats.items())) or "no tokens")
+    if stats.get("unknown") or stats.get("restored_altered"):
+        print("Check the lines marked ⚠ in the report.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="masquer", description=__doc__)
     p.add_argument("--version", action="version", version=f"masquer {__version__}")
@@ -41,6 +79,30 @@ def main(argv: list[str] | None = None) -> int:
                    help="share of rows repeated with only the timestamp changed (default 0.1)")
     s.add_argument("--list", action="store_true", help="list the known tables and exit")
     s.set_defaults(func=cmd_synth)
+
+    c = sub.add_parser("case", help="create a case folder")
+    c.add_argument("action", choices=["new"])
+    c.add_argument("dir")
+    c.set_defaults(func=cmd_case)
+
+    i = sub.add_parser("import", help="tokenise, defang and collapse Defender exports into a case")
+    i.add_argument("case")
+    i.add_argument("files", nargs="+", help="CSV or JSON exports")
+    i.add_argument("--gap", type=int, default=3600, help="collapse repeats less than this many seconds apart")
+    i.set_defaults(func=cmd_import)
+
+    o = sub.add_parser("outbox", help="write the paste-ready outbox (egress gate runs first)")
+    o.add_argument("case")
+    o.add_argument("--prompt", help="file with your own prompt (default: built-in generic prompt)")
+    o.add_argument("--max-chars", type=int, default=150_000, help="split into parts above this size")
+    o.add_argument("--allow-without-ner", action="store_true",
+                   help="write the outbox although the name-detection stage isn't installed")
+    o.set_defaults(func=cmd_outbox)
+
+    r = sub.add_parser("restore", help="put the original values back into a saved answer")
+    r.add_argument("case")
+    r.add_argument("inbox", help="the cloud answer saved as a file, e.g. CASE/inbox-1.md")
+    r.set_defaults(func=cmd_restore)
 
     a = p.parse_args(argv)
     return a.func(a)
