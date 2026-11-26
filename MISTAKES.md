@@ -81,3 +81,11 @@ turns out to have been based on a misunderstanding.
 - **Root cause:** Claude picked a convenient default for where real exports are read from, instead of asking. That's a data-handling decision.
 - **Fix applied:** `masquer --exports DIR` (or `$MASQUER_EXPORTS`) is the only folder the TUI reads. Without it, Import is disabled. Typed paths outside it are refused, `..` and symlinks included.
 - **Rule going forward:** where the tool reads real data from, or writes it to, is kaywoz's decision. Propose it, don't default it.
+
+### 2026-11-26 — chat (lint finding read from its title)
+
+- **Trigger:** wrong assumption
+- **What happened:** reviewing compose-lint on home0ps, Claude said its 20 CL-0026 findings ("no resource limits") conflicted with the house `mem_limit` rule. The findings' messages say "no CPU limit"; every flagged service sets `mem_limit`.
+- **Root cause:** summarised findings by rule title and count without reading one finding's message.
+- **Fix applied:** corrected in chat; CL-0026 there is a missing `cpus` setting, which the house standard doesn't require.
+- **Rule going forward:** before calling a tool's finding drift, read at least one full finding message and the source line it points to.
